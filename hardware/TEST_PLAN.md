@@ -59,6 +59,9 @@ the theater is free. Monitoring is passive.
    `.venv` (default `../ha-dev`; see [`script/dev_setup.sh`](../script/dev_setup.sh)).
 2. Run `script/dev_setup.sh`, then start Home Assistant with the **Home
    Assistant (Lumagen hardware)** launch configuration or `script/dev_hass.sh`.
+   Use the script for anything that restarts Home Assistant (7.3, and the
+   restart scenario): a restart exits with code 100, which the script answers
+   by starting it again and the debugger doesn't.
 3. Onboard, then create a long-lived access token (your profile, **Security**)
    and save it to `../ha-dev/config/.lumagen_test_token`. That folder is not
    in git.
