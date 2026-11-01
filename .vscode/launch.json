@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Run script/dev_setup.sh first. Breakpoints work in this repo, the
+      // sibling aiolumagen checkout and Home Assistant itself.
+      "name": "Home Assistant (Lumagen hardware)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "homeassistant",
+      "python": "${workspaceFolder}/../ha-dev/.venv/bin/python",
+      "args": [
+        "-c",
+        "${workspaceFolder}/../ha-dev/config",
+        "--skip-pip-packages",
+        "aiolumagen"
+      ],
+      "justMyCode": false
+    }
+  ]
+}

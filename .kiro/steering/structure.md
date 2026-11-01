@@ -6,6 +6,12 @@ ha-lumagen/
 ├── hacs.json                            # HACS manifest (name, country, min HA version)
 ├── README.md
 ├── LICENSE
+├── .github/workflows/                   # validate.yml (hassfest + HACS), tests.yml (ruff, mypy, pytest on newest HA)
+├── .vscode/launch.json                  # debug the local HA from script/dev_setup.sh
+├── hardware/TEST_PLAN.md                # end-to-end tests against a real Lumagen, and the release check
+├── script/
+│   ├── dev_setup.sh                     # local HA: integration symlinked in, aiolumagen editable
+│   └── dev_hass.sh                      # run it (skips reinstalling aiolumagen)
 ├── custom_components/
 │   └── lumagen/                         # ← the actual integration; this is what ships
 │       ├── manifest.json                # domain, deps, requirements, quality scale
