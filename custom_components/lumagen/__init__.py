@@ -317,8 +317,20 @@ def _resolve_target_entry(
         if device is None:
             continue
         for entry in loaded_entries:
-            if entry.entry_id in device.config_entries:
+            if entry.entry_id in _device_entry_ids(device):
                 return entry
     raise ServiceValidationError(
         f"None of the targeted devices are linked to a loaded Lumagen config entry: {device_ids!r}"
     )
+
+
+def _device_entry_ids(device: Any) -> set[str]:
+    """The config entries a device belongs to.
+
+    Home Assistant 2026.12 gives a device a single ``config_entry_id`` and
+    deprecates ``config_entries`` (removed in 2027.10); older releases only
+    have the set.
+    """
+    if (entry_id := getattr(device, "config_entry_id", None)) is not None:
+        return {entry_id}
+    return set(device.config_entries)

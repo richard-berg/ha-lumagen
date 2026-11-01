@@ -257,3 +257,26 @@ def _silence_config_entries_warnings():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         yield
+
+
+class _NewDevice:
+    """A device as Home Assistant 2026.12 shapes it; the old set is deprecated."""
+
+    config_entry_id = "entry-a"
+
+    @property
+    def config_entries(self) -> set[str]:
+        raise AssertionError("deprecated in Home Assistant 2026.12; must not be read")
+
+
+class _OldDevice:
+    """A device as releases before 2026.12 shape it."""
+
+    config_entries = frozenset({"entry-a", "entry-b"})
+
+
+def test_device_entry_ids_uses_config_entry_id_where_available() -> None:
+    from custom_components.lumagen import _device_entry_ids
+
+    assert _device_entry_ids(_NewDevice()) == {"entry-a"}
+    assert _device_entry_ids(_OldDevice()) == {"entry-a", "entry-b"}
