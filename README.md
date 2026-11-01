@@ -1,8 +1,11 @@
 # ha-lumagen
 
+[![Validate](https://github.com/frankrosano/ha-lumagen/actions/workflows/validate.yml/badge.svg)](https://github.com/frankrosano/ha-lumagen/actions/workflows/validate.yml)
+[![Tests](https://github.com/frankrosano/ha-lumagen/actions/workflows/tests.yml/badge.svg)](https://github.com/frankrosano/ha-lumagen/actions/workflows/tests.yml)
+
 Home Assistant custom integration for a [Lumagen Radiance Pro](https://www.lumagen.com/) video processor.
 
-This integration is a thin wrapper over [`aiolumagen`](../aiolumagen). All protocol work — parsing, state tracking, commands — lives in the library; the integration adds HA lifecycle, entities, and a config flow.
+This integration is a thin wrapper over [`aiolumagen`](https://github.com/frankrosano/aiolumagen). All protocol work — parsing, state tracking, commands — lives in the library; the integration adds HA lifecycle, entities, and a config flow.
 
 ## Topology
 
@@ -19,24 +22,28 @@ esphome-lumagen firmware ── USB  │
   └──────── USB-C → USB-B ───────┘
 ```
 
-The ESPHome bridge ([`esphome-lumagen`](../esphome-lumagen)) exposes the Lumagen's USB-B serial port to Home Assistant via ESPHome's `serial_proxy` component. When you adopt the ESPHome device in HA, HA automatically lists its serial proxies alongside any physical `/dev/tty*` ports. This integration's config flow presents that list as a dropdown — no host/PSK fields to fill in.
+The ESPHome bridge (the `esphome-lumagen` firmware) exposes the Lumagen's USB-B serial port to Home Assistant via ESPHome's `serial_proxy` component. When you adopt the ESPHome device in HA, HA automatically lists its serial proxies alongside any physical `/dev/tty*` ports. This integration's config flow presents that list as a dropdown — no host/PSK fields to fill in.
 
 Direct RS-232 (cabled from your HA host to the Lumagen's DB9) also works — the same dropdown will show the `/dev/tty*` entry.
 
 ## Requirements
 
 - Home Assistant **2026.5** or newer (native serial_proxy surfacing in the `usb` integration)
-- The [`esphome-lumagen`](../esphome-lumagen) firmware on a Waveshare ESP32-S3-POE-ETH (or a direct RS-232 cable)
+- The `esphome-lumagen` firmware on a Waveshare ESP32-S3-POE-ETH (or a direct RS-232 cable)
 - The ESPHome integration adopted in HA for the bridge device (if going the ESPHome route)
 - Network connectivity between HA and the bridge
 
 ## Installation
 
-### HACS (once added to a repo)
+### Marketplace (Home Assistant 2026.11+) or HACS
 
-1. HACS → Integrations → menu → Custom repositories → add `https://github.com/frankrosano/ha-lumagen` as type *Integration*.
+[![Open your Home Assistant instance and open this repository in the Marketplace or HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=frankrosano&repository=ha-lumagen&category=integration)
+
+1. Select the badge above. It opens this repository in **Settings** → **Marketplace** on Home Assistant 2026.11 and newer, or in HACS on older versions, and offers to add it as a custom repository.
 2. Install **Lumagen Radiance Pro**.
-3. Restart Home Assistant.
+3. On a first install, you can set it up right away. After an update, restart Home Assistant when the repair asks you to.
+
+Once the integration is in the Marketplace catalog, you can also find it by searching the Marketplace for **Lumagen Radiance Pro**.
 
 ### Manual
 
@@ -45,7 +52,9 @@ Direct RS-232 (cabled from your HA host to the Lumagen's DB9) also works — the
 
 ## Setup
 
-1. Settings → Devices & services → **Add integration** → search for **Lumagen Radiance Pro**.
+[![Open your Home Assistant instance and start setting up Lumagen Radiance Pro.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=lumagen)
+
+1. Settings → Devices & services → **Add integration** → search for **Lumagen Radiance Pro** (or select the badge above).
 2. From the dropdown, pick the serial port for the Lumagen. ESPHome-proxied ports appear with their friendly name ("Lumagen") plus the bridge's hostname; physical ports appear with their `/dev/tty*` path.
 3. The flow opens the port, queries `ZQS01` for the device info, and creates the config entry with the detected model and firmware in the title.
 
@@ -119,8 +128,8 @@ Not yet tested on hardware: a real install started from standby.
 
 ## Status
 
-Alpha / prototype. Not yet published to HACS default store.
+Alpha / prototype. Not yet in the Marketplace/HACS catalog — add it from the badge under [Installation](#installation).
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+MIT. See [`LICENSE`](https://github.com/frankrosano/ha-lumagen/blob/main/LICENSE).

@@ -26,7 +26,7 @@ If you violate one of these, stop and move the code.
 ## Change Ordering
 
 1. **`aiolumagen` first.** Add the API + tests, then merge.
-2. **`ha-lumagen` second.** Bump the git pin in `manifest.json` (pinning `aiolumagen@git+https://github.com/frankrosano/aiolumagen.git@<sha-or-tag>` is fine when you need a specific commit; otherwise `@main`), update consumers, ship.
+2. **`ha-lumagen` second.** Once the `aiolumagen` release is on PyPI, bump the `aiolumagen==<version>` pin in `manifest.json`, update consumers, ship. (A temporary `aiolumagen@git+https://github.com/frankrosano/aiolumagen.git@<sha>` pin is fine while testing an unreleased commit, but never release the integration with one — Home Assistant's docs require PyPI requirements.)
 3. **`esphome-lumagen` rarely changes** in lockstep with the others — it ships the wire, not the protocol.
 
 Don't introduce dead API in `aiolumagen` "for `ha-lumagen` to consume later." Ship features in the order users see them.
@@ -34,8 +34,8 @@ Don't introduce dead API in `aiolumagen` "for `ha-lumagen` to consume later." Sh
 ## Version Coordination
 
 - `aiolumagen`'s version lives in **two places**: `pyproject.toml`'s `version =` and `src/aiolumagen/__init__.py`'s `__version__`. Keep them in sync.
-- `ha-lumagen`'s `manifest.json` `version` is the HACS-visible release; bump it when the integration's behavior changes (not just because aiolumagen did).
-- `ha-lumagen`'s `manifest.json` `requirements` line pins `aiolumagen` from git. Consider pinning to a tag or sha (rather than `@main`) once we have stable releases.
+- `ha-lumagen`'s `manifest.json` `version` is the Marketplace/HACS-visible release; bump it when the integration's behavior or requirements change (not just because aiolumagen did). It must equal the tag of the GitHub release that ships it.
+- `ha-lumagen`'s `manifest.json` `requirements` line pins `aiolumagen==<version>` from PyPI. `aiolumagen` publishes by pushing a `v<version>` tag (the `Publish` workflow checks the tag against both version strings).
 
 ## Where Bugs File
 
@@ -66,8 +66,8 @@ Don't introduce dead API in `aiolumagen` "for `ha-lumagen` to consume later." Sh
 
 ## Local Development Wiring
 
-- `ha-lumagen/pyproject.toml` overrides the manifest's git pin via `[tool.uv.sources]` to point at the sibling `../aiolumagen` checkout (`editable = true`). Edit `aiolumagen` and the integration sees changes immediately under `uv run pytest`.
-- End users always get the git-pinned version from `manifest.json`.
+- `ha-lumagen/pyproject.toml` overrides the manifest's PyPI pin via `[tool.uv.sources]` to point at the sibling `../aiolumagen` checkout (`editable = true`). Edit `aiolumagen` and the integration sees changes immediately under `uv run pytest`.
+- End users always get the PyPI-pinned version from `manifest.json`.
 
 ## Secrets, Ignores
 

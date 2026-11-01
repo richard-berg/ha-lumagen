@@ -14,11 +14,12 @@
   - `after_dependencies: ["esphome"]` — so adopted ESPHome devices have set up before us
   - `iot_class: "local_push"` — Lumagen `Full v5` reporting is the primary path; polling is fallback
   - `config_flow: true`, `integration_type: "device"`, `quality_scale: "bronze"`
+  - `categories` and `connectivity` — the Marketplace browses by category; hassfest and the HACS action validate both
 
 ## Runtime Dependency
 
 ```
-aiolumagen@git+https://github.com/frankrosano/aiolumagen.git@main
+aiolumagen==<version>   # from PyPI
 ```
 
 The integration imports from `aiolumagen` directly (client, state, exceptions, enums). During development, `pyproject.toml` overrides this with `[tool.uv.sources]` pointing at the sibling `../aiolumagen` repo via `editable = true`.
