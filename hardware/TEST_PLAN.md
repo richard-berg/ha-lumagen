@@ -70,8 +70,9 @@ the theater is free. Monitoring is passive.
    ../ha-dev/.venv/bin/python hardware/fault_proxy.py /dev/ttyUSB0 --log proxy.jsonl
    ```
 
-Run the Python tools with Home Assistant's venv (`../ha-dev/.venv/bin/python`);
-it has everything they need.
+Run the Python tools with Home Assistant's venv, which has everything they
+need: `../ha-dev/.venv/bin/python` (not through `realpath`, which resolves
+the venv's symlink to a Python without its packages).
 
 ### Tools
 
@@ -79,7 +80,7 @@ it has everything they need.
 | --- | --- |
 | [`fault_proxy.py`](fault_proxy.py) | Sits between Home Assistant and the port. Logs every byte, flags every state-changing command nobody announced, and injects faults on command: latency, silence in either direction, bit flips, noise, duplicated, truncated or malformed lines, byte-at-a-time delivery, stalls, echo, other line endings, closed, reset and refused connections, the device port going away, and a random `chaos` schedule. `nc 127.0.0.1 14998`, then `help`. |
 | [`lumagen_probe.py`](lumagen_probe.py) `scenarios` | The automated adversarial suite over topology P: 24 scenarios (25 with `--long`), each checked against I1–I4, I6, I7 and I9. |
-| `lumagen_probe.py exercise` | Closed-loop commands: set, confirm from the device, restore. Checks that settings written together (sharpness on/level/sensitivity, HDR gamma/max nits) don't reset each other. `--allow sound picture power` adds steps that are noticeable; `--operator` asks you to confirm each on screen. |
+| `lumagen_probe.py exercise` | Closed-loop commands: set, confirm from the device, restore. Checks that settings written together (sharpness on/level/sensitivity, HDR gamma/max nits) don't reset each other. `--allow sound picture power` adds steps that are noticeable; `--operator` asks you to confirm each on screen. Settings the Lumagen can't report back (HDR mapping, fan speed, and subtitle shift on firmware that omits it) are confirmed by Home Assistant's own state only; in topology P, pass `--proxy-control` so the proxy's log shows the command reached the unit. Steps whose current value is unknown are skipped, since they couldn't be restored. |
 | `lumagen_probe.py monitor` | The soak monitor: I1, I3, I4, I7, I8, I9, I10. `--tty ttyUSB0` treats USB removals as causes; `--proxy-log` the proxy's faults; `--marks` your own. Survives Home Assistant restarts. Prints a report hourly and on exit; exits non-zero on failure. |
 | `lumagen_probe.py snapshot` | Every Lumagen entity's state, to hold against the OSD. |
 | `lumagen_probe.py mark` | Record a cause you created by hand: `mark --marks marks.jsonl --seconds 60 pulled the AC power`. |

@@ -1048,11 +1048,16 @@ class Health:
         self.identity = [ents[k] for k in ("sensor.model", "sensor.firmware") if k in ents]
         self.current: dict[str, str] = {}
         self.changed = asyncio.Event()
+        # Every identity value seen since the last reset, outages aside: a
+        # damaged value that a later re-query repairs must still fail.
+        self.identity_seen: dict[str, set[str]] = defaultdict(set)
 
     def on_state(self, event: dict[str, Any]) -> None:
         new = event["data"].get("new_state")
         if new and new["entity_id"] in (self.health, *self.identity):
             self.current[new["entity_id"]] = new["state"]
+            if new["entity_id"] in self.identity and new["state"] != "unavailable":
+                self.identity_seen[new["entity_id"]].add(new["state"])
             self.changed.set()
 
     async def attach(self) -> None:
@@ -1142,6 +1147,7 @@ async def run_scenario(
     counters_before = json.loads(await proxy_ctl(ctl, "status"))["counters"]
     logs_before = {k: v.get("count", 1) for k, v in (await ha.lumagen_logs()).items()}
     identity_before = health.identity_values()
+    health.identity_seen.clear()
     await proxy_ctl(ctl, f"mark scenario {sc.name}")
     fault_start = time.monotonic()
     for i in range(sc.repeat):
@@ -1194,8 +1200,11 @@ async def run_scenario(
                 problems.append(f"logged {item.get('level')}: {key[3][:200]}")
     if levels["WARNING"] > args.max_warnings * sc.repeat:
         problems.append(f"{levels['WARNING']} warnings")
-    if sc.identity_unchanged and (after := health.identity_values()) != identity_before:
-        problems.append(f"identity changed: {identity_before} -> {after}")
+    if sc.identity_unchanged:
+        for entity_id, seen in health.identity_seen.items():
+            was = identity_before.get(entity_id)
+            if wrong := sorted(seen - {was}):
+                problems.append(f"{entity_id} read {wrong} (was {was!r})")
     return {
         "scenario": sc.name,
         "ok": not problems,

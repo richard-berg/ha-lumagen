@@ -224,3 +224,30 @@ def test_bad_entry_state_fails_the_report(clock: _Clock) -> None:
     mon.on_entries([{"type": "updated", "entry": {"entry_id": "other", "state": "setup_error"}}])
     assert len(mon.bad_entry_states) == 1
     assert not mon.report()["ok"]
+
+
+def test_scenario_identity_check_sees_values_a_later_query_repaired() -> None:
+    ents = {
+        "binary_sensor.serial_connected": "binary_sensor.serial",
+        "sensor.firmware": "sensor.firmware",
+        "sensor.model": "sensor.model",
+    }
+    health = probe.Health(probe.HA("http://ha", "token"), ents)
+
+    def state(entity_id: str, value: str) -> None:
+        health.on_state(
+            {
+                "data": {
+                    "entity_id": entity_id,
+                    "new_state": {"entity_id": entity_id, "state": value},
+                }
+            }
+        )
+
+    state("sensor.firmware", "030225")
+    health.identity_seen.clear()
+    state("sensor.firmware", "")
+    state("sensor.firmware", "unavailable")
+    state("sensor.firmware", "030225")
+    assert health.identity_seen == {"sensor.firmware": {"", "030225"}}
+    assert health.identity_values() == {"sensor.model": None, "sensor.firmware": "030225"}
