@@ -188,17 +188,23 @@ async def test_no_release_known_leaves_latest_unset(
 async def test_device_sw_version_follows_firmware(hass: HomeAssistant) -> None:
     client = make_client(firmware="030225")
     await setup_entry(hass, client)
-    coordinator = hass.config_entries.async_entries(DOMAIN)[0].runtime_data
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "test_lumagen")})
-    assert device is not None and device.sw_version == "030225"
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    coordinator = entry.runtime_data
+
+    def _device() -> dr.DeviceEntry:
+        # Not async_get_device(identifiers=...): newer Home Assistant
+        # deprecates it, and older releases lack its replacements.
+        (device,) = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+        return device
+
+    assert _device().sw_version == "030225"
 
     new_state = dataclasses.replace(client.state, firmware="030326")
     client.state = new_state
     coordinator.async_set_updated_data(new_state)
     await hass.async_block_till_done()
 
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "test_lumagen")})
-    assert device.sw_version == "030326"
+    assert _device().sw_version == "030326"
     assert hass.states.get(_entity_id(hass)).state == STATE_OFF
 
 
