@@ -2,7 +2,7 @@
 name = "ha-lumagen"
 version = "0.3.0"
 description = "Home Assistant custom integration for Lumagen Radiance Pro (development metadata; the deployable artifact is custom_components/lumagen/)."
-requires-python = ">=3.14"
+requires-python = ">=3.14.2"
 
 [dependency-groups]
 dev = [
@@ -59,3 +59,11 @@ select = [
 python_version = "3.14"
 strict = false  # HA's own stubs aren't strict-clean; keep false for v0.1
 warn_unreachable = true
+
+# Since HA 2026.9, `import voluptuous` resolves to probatio at runtime, and HA's
+# signatures expect probatio types. The import stays because it's the only one
+# that works on every supported HA; treat it as untyped so mypy agrees.
+[[tool.mypy.overrides]]
+module = ["voluptuous", "voluptuous.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
