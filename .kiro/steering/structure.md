@@ -8,7 +8,11 @@ ha-lumagen/
 ├── LICENSE
 ├── .github/workflows/                   # validate.yml (hassfest + HACS), tests.yml (ruff, mypy, pytest on newest HA)
 ├── .vscode/launch.json                  # debug the local HA from script/dev_setup.sh
-├── hardware/TEST_PLAN.md                # end-to-end tests against a real Lumagen, and the release check
+├── hardware/
+│   ├── TEST_PLAN.md                     # end-to-end and adversarial tests against a real Lumagen, soak, release check
+│   ├── fault_proxy.py                   # serial<->TCP proxy: audits writes, injects protocol/link faults
+│   ├── lumagen_probe.py                 # HA API checks: monitor (soak), exercise, scenarios, snapshot, mark
+│   └── usb_fault.sh                     # USB unplug/unbind/flap/chaos, as root on the VM that owns the adapter
 ├── script/
 │   ├── dev_setup.sh                     # local HA: integration symlinked in, aiolumagen editable
 │   └── dev_hass.sh                      # run it (skips reinstalling aiolumagen)
