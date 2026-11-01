@@ -143,22 +143,34 @@ def test_detected_aspect_can_differ_from_applied_aspect() -> None:
 # ---------- Enum sensors ----------
 
 
-def test_output_scan_mode_reports_enum_value_and_declares_all_options() -> None:
-    state = LumagenState(output_scan_mode=SourceMode.PROGRESSIVE)
-    description = _BY_KEY["output_scan_mode"]
-    assert description.value_fn(state) == "p"
-    # Every value the enum can produce must be declared, or HA logs the state
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        (SourceMode.INTERLACED, "interlaced"),
+        (SourceMode.PROGRESSIVE, "progressive"),
+        (SourceMode.NO_INPUT, "no_input"),
+        (SourceMode.NO_INPUT_V5, "no_input"),
+        (None, None),
+    ],
+)
+@pytest.mark.parametrize("key", ["source_mode", "output_scan_mode"])
+def test_scan_mode_reports_state_key_and_declares_all_options(
+    key: str, mode: SourceMode | None, expected: str | None
+) -> None:
+    description = _BY_KEY[key]
+    assert description.value_fn(LumagenState(**{key: mode})) == expected
+    # Every state the sensor can report must be declared, or HA logs the state
     # as invalid for the entity.
-    assert set(description.options or []) == {sm.value for sm in SourceMode}
+    assert description.options == ["interlaced", "progressive", "no_input"]
 
 
 def test_auto_aspect_status_reports_enum_value_and_declares_all_options() -> None:
     description = _BY_KEY["auto_aspect_status"]
     assert (
         description.value_fn(LumagenState(auto_aspect_status=AutoAspectStatus.DISABLED))
-        == "Disabled"
+        == "disabled"
     )
-    assert set(description.options or []) == {aa.value for aa in AutoAspectStatus}
+    assert set(description.options or []) == {"off", "disabled", "on"}
 
 
 def test_auto_aspect_status_unknown_on_firmware_that_omits_it() -> None:

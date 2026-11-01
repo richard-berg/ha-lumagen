@@ -105,51 +105,49 @@
       "colorspace": {
         "name": "Colorspace",
         "state": {
-          "Rec.601": "Rec.601",
-          "Rec.709": "Rec.709",
-          "Rec.2020": "Rec.2020",
-          "Rec.2100": "Rec.2100"
+          "rec_601": "Rec.601",
+          "rec_709": "Rec.709",
+          "rec_2020": "Rec.2020",
+          "rec_2100": "Rec.2100"
         }
       },
       "hdr_status": {
         "name": "HDR status",
         "state": {
-          "SDR": "SDR",
-          "HDR": "HDR"
+          "sdr": "SDR",
+          "hdr": "HDR"
         }
       },
       "input_status": {
         "name": "Input status",
         "state": {
-          "No Source": "No source",
-          "Active": "Active",
-          "Test Pattern": "Test pattern"
+          "no_source": "No source",
+          "active": "Active",
+          "test_pattern": "Test pattern"
         }
       },
       "source_mode": {
         "name": "Source mode",
         "state": {
-          "i": "Interlaced",
-          "p": "Progressive",
-          "-": "No input",
-          "n": "No input"
+          "interlaced": "Interlaced",
+          "progressive": "Progressive",
+          "no_input": "No input"
         }
       },
       "output_scan_mode": {
         "name": "Output mode",
         "state": {
-          "i": "Interlaced",
-          "p": "Progressive",
-          "-": "No input",
-          "n": "No input"
+          "interlaced": "Interlaced",
+          "progressive": "Progressive",
+          "no_input": "No input"
         }
       },
       "auto_aspect_status": {
         "name": "Auto aspect status",
         "state": {
-          "Off": "Off",
-          "Disabled": "Disabled",
-          "On": "On"
+          "off": "Off",
+          "disabled": "Disabled",
+          "on": "On"
         }
       },
       "physical_input": {
@@ -252,24 +250,24 @@
       "sharpness_sensitivity": {
         "name": "Sharpness sensitivity",
         "state": {
-          "Normal": "Normal",
-          "High": "High"
+          "normal": "Normal",
+          "high": "High"
         }
       },
       "subtitle_shift": {
         "name": "Subtitle shift",
         "state": {
-          "Off": "Off",
-          "Small": "Small",
-          "Large": "Large"
+          "off": "Off",
+          "small": "Small",
+          "large": "Large"
         }
       },
       "hdr_gamma_mode": {
         "name": "HDR gamma mode",
         "state": {
-          "Auto": "Auto",
-          "HDR": "HDR",
-          "SDR": "SDR"
+          "auto": "Auto",
+          "hdr": "HDR",
+          "sdr": "SDR"
         }
       }
     },

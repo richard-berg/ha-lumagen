@@ -81,9 +81,9 @@ def test_closest_aspect_label_handles_garbage(raw: str | None) -> None:
 
 def test_current_subtitle_shift_maps_device_value_to_label() -> None:
 
-    assert _current_subtitle_shift(LumagenState(subtitle_shift=SubtitleShift.OFF)) == "Off"
-    assert _current_subtitle_shift(LumagenState(subtitle_shift=SubtitleShift.PERCENT_3)) == "Small"
-    assert _current_subtitle_shift(LumagenState(subtitle_shift=SubtitleShift.PERCENT_6)) == "Large"
+    assert _current_subtitle_shift(LumagenState(subtitle_shift=SubtitleShift.OFF)) == "off"
+    assert _current_subtitle_shift(LumagenState(subtitle_shift=SubtitleShift.PERCENT_3)) == "small"
+    assert _current_subtitle_shift(LumagenState(subtitle_shift=SubtitleShift.PERCENT_6)) == "large"
 
 
 def test_current_subtitle_shift_falls_back_when_device_is_silent() -> None:

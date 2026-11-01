@@ -185,7 +185,7 @@ async def test_select_sharpness_sensitivity_routes_through_coordinator() -> None
     entity._optimistic_option = None
     entity.async_write_ha_state = MagicMock()
 
-    await entity.async_select_option("High")
+    await entity.async_select_option("high")
     coord.async_set_sharpness.assert_awaited_once_with(sensitivity="H")
 
     coord.async_set_sharpness.reset_mock()
@@ -236,9 +236,9 @@ async def test_select_subtitle_shift_off_small_large_dispatch() -> None:
     client = MagicMock()
     client.set_subtitle_shift = AsyncMock()
 
-    await _select_subtitle_shift(client, LumagenState(), "Off")
-    await _select_subtitle_shift(client, LumagenState(), "Small")
-    await _select_subtitle_shift(client, LumagenState(), "Large")
+    await _select_subtitle_shift(client, LumagenState(), "off")
+    await _select_subtitle_shift(client, LumagenState(), "small")
+    await _select_subtitle_shift(client, LumagenState(), "large")
 
     assert [c.args for c in client.set_subtitle_shift.await_args_list] == [(0,), (1,), (2,)]
 
@@ -253,8 +253,8 @@ async def test_select_subtitle_shift_unknown_label_is_no_op() -> None:
 @pytest.mark.parametrize(
     ("sensitivity", "expected"),
     [
-        (SharpnessSensitivity.NORMAL, "Normal"),
-        (SharpnessSensitivity.HIGH, "High"),
+        (SharpnessSensitivity.NORMAL, "normal"),
+        (SharpnessSensitivity.HIGH, "high"),
         (None, None),
     ],
 )
@@ -324,7 +324,7 @@ async def test_hdr_gamma_mode_set_preserves_max_nits() -> None:
     entity._optimistic_option = None
     entity.async_write_ha_state = MagicMock()
 
-    await entity.async_select_option("HDR")
+    await entity.async_select_option("hdr")
 
     client.set_hdr_intensity_mapping.assert_awaited_once_with(display_max_nits=1000, gamma_mode="H")
     assert coord.hdr_mapping_gamma_mode == "H"

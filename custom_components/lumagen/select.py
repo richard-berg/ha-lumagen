@@ -120,8 +120,8 @@ _MEMORY_COMMANDS: dict[str, Memory] = {
 
 # --- Sharpness sensitivity (compound-write — preserves enabled + level) ---
 _SHARPNESS_SENSITIVITY_TO_WIRE: dict[str, SharpnessSensitivity] = {
-    "Normal": SharpnessSensitivity.NORMAL,
-    "High": SharpnessSensitivity.HIGH,
+    "normal": SharpnessSensitivity.NORMAL,
+    "high": SharpnessSensitivity.HIGH,
 }
 _SHARPNESS_WIRE_TO_LABEL = {v: k for k, v in _SHARPNESS_SENSITIVITY_TO_WIRE.items()}
 
@@ -131,12 +131,12 @@ _SHARPNESS_WIRE_TO_LABEL = {v: k for k, v in _SHARPNESS_SENSITIVITY_TO_WIRE.item
 # Lumagen does appear to report it in the Full v5 status push, which lets the
 # dropdown reflect a change made with the device's own remote — but only on
 # firmware that appends that field. See _current_subtitle_shift.
-_SUBTITLE_SHIFT_OPTIONS = ("Off", "Small", "Large")
-_SUBTITLE_SHIFT_TO_LEVEL = {"Off": 0, "Small": 1, "Large": 2}
+_SUBTITLE_SHIFT_OPTIONS = ("off", "small", "large")
+_SUBTITLE_SHIFT_TO_LEVEL = {"off": 0, "small": 1, "large": 2}
 _SUBTITLE_SHIFT_WIRE_TO_LABEL: dict[SubtitleShift, str] = {
-    SubtitleShift.OFF: "Off",
-    SubtitleShift.PERCENT_3: "Small",
-    SubtitleShift.PERCENT_6: "Large",
+    SubtitleShift.OFF: "off",
+    SubtitleShift.PERCENT_3: "small",
+    SubtitleShift.PERCENT_6: "large",
 }
 
 
@@ -146,9 +146,9 @@ _SUBTITLE_SHIFT_WIRE_TO_LABEL: dict[SubtitleShift, str] = {
 # coordinator. The entity handles read/write directly against that state
 # rather than going through select_fn.
 _HDR_GAMMA_LABEL_TO_WIRE: dict[str, HdrGammaMode] = {
-    "Auto": HdrGammaMode.AUTO,
-    "HDR": HdrGammaMode.HDR,
-    "SDR": HdrGammaMode.SDR,
+    "auto": HdrGammaMode.AUTO,
+    "hdr": HdrGammaMode.HDR,
+    "sdr": HdrGammaMode.SDR,
 }
 _HDR_GAMMA_WIRE_TO_LABEL = {v: k for k, v in _HDR_GAMMA_LABEL_TO_WIRE.items()}
 

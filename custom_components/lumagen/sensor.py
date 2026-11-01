@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 
 from aiolumagen import (
     AutoAspectStatus,
@@ -33,6 +34,30 @@ class LumagenSensorDescription(SensorEntityDescription):
     """Sensor description with a pull-from-state function."""
 
     value_fn: Callable[[LumagenState], StateType]
+
+
+def _state_key(member: StrEnum | None) -> StateType:
+    """Return the translation key for an enum state: its member name, lowercased.
+
+    Raw device values like ``Rec.709`` or ``No Source`` aren't valid
+    translation keys, and the member names are stable even if the wire
+    values change.
+    """
+    return member.name.lower() if member is not None else None
+
+
+# The firmware reports "no input" as ``-`` or, on Full v5, ``n``.
+_SOURCE_MODE_STATES: dict[SourceMode, str] = {
+    SourceMode.INTERLACED: "interlaced",
+    SourceMode.PROGRESSIVE: "progressive",
+    SourceMode.NO_INPUT: "no_input",
+    SourceMode.NO_INPUT_V5: "no_input",
+}
+_SOURCE_MODE_OPTIONS = list(dict.fromkeys(_SOURCE_MODE_STATES.values()))
+
+
+def _source_mode_state(mode: SourceMode | None) -> StateType:
+    return _SOURCE_MODE_STATES.get(mode) if mode is not None else None
 
 
 SENSORS: tuple[LumagenSensorDescription, ...] = (
@@ -120,36 +145,36 @@ SENSORS: tuple[LumagenSensorDescription, ...] = (
         key="colorspace",
         translation_key="colorspace",
         device_class=SensorDeviceClass.ENUM,
-        options=[cs.value for cs in Colorspace],
-        value_fn=lambda s: s.colorspace.value if s.colorspace else None,
+        options=[cs.name.lower() for cs in Colorspace],
+        value_fn=lambda s: _state_key(s.colorspace),
     ),
     LumagenSensorDescription(
         key="hdr_status",
         translation_key="hdr_status",
         device_class=SensorDeviceClass.ENUM,
-        options=[hs.value for hs in HdrStatus],
-        value_fn=lambda s: s.hdr_status.value if s.hdr_status else None,
+        options=[hs.name.lower() for hs in HdrStatus],
+        value_fn=lambda s: _state_key(s.hdr_status),
     ),
     LumagenSensorDescription(
         key="input_status",
         translation_key="input_status",
         device_class=SensorDeviceClass.ENUM,
-        options=[ist.value for ist in InputStatus],
-        value_fn=lambda s: s.input_status.value if s.input_status else None,
+        options=[ist.name.lower() for ist in InputStatus],
+        value_fn=lambda s: _state_key(s.input_status),
     ),
     LumagenSensorDescription(
         key="source_mode",
         translation_key="source_mode",
         device_class=SensorDeviceClass.ENUM,
-        options=[sm.value for sm in SourceMode],
-        value_fn=lambda s: s.source_mode.value if s.source_mode else None,
+        options=_SOURCE_MODE_OPTIONS,
+        value_fn=lambda s: _source_mode_state(s.source_mode),
     ),
     LumagenSensorDescription(
         key="output_scan_mode",
         translation_key="output_scan_mode",
         device_class=SensorDeviceClass.ENUM,
-        options=[sm.value for sm in SourceMode],
-        value_fn=lambda s: s.output_scan_mode.value if s.output_scan_mode else None,
+        options=_SOURCE_MODE_OPTIONS,
+        value_fn=lambda s: _source_mode_state(s.output_scan_mode),
     ),
     # --- Signal-path diagnostics (from the extended !I24/!I25 fields) ---
     LumagenSensorDescription(
@@ -226,9 +251,9 @@ SENSORS: tuple[LumagenSensorDescription, ...] = (
         key="auto_aspect_status",
         translation_key="auto_aspect_status",
         device_class=SensorDeviceClass.ENUM,
-        options=[aa.value for aa in AutoAspectStatus],
+        options=[aa.name.lower() for aa in AutoAspectStatus],
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda s: s.auto_aspect_status.value if s.auto_aspect_status else None,
+        value_fn=lambda s: _state_key(s.auto_aspect_status),
     ),
     # --- HDR source mastering metadata (from !I52) ---
     # All three are diagnostic — they describe the encoded content, not

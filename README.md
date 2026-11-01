@@ -88,6 +88,8 @@ Separately, note that Full v5 is a **firmware requirement**, not just a menu pre
 - **Numbers**: Sharpness level (0–7), Minimum fan speed (0–9), HDR mapping max nits (0 to disable; 50–10000 to set display peak)
 - **Update**: Firmware — offers new Radiance Pro firmware from lumagen.com and installs it (see below)
 
+The enum sensors and the Sharpness sensitivity, Subtitle shift and HDR gamma mode selects show translated labels, but their states are lowercase keys: use those in automations and templates, e.g. `rec_709`, `hdr`, `no_source`, `no_input`, `disabled`, `small`, `auto`. (Before 0.10.0 they were the raw labels, like `Rec.709` or `HDR`.)
+
 ## Firmware updates
 
 The **Firmware** update entity watches Lumagen's [release page](https://www.lumagen.com/software-updates/radiance-pro-updates) and can install a new release from Home Assistant.
