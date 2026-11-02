@@ -39,7 +39,7 @@ from homeassistant.components.remote import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import LumagenConfigEntry, LumagenCoordinator
+from .coordinator import LumagenConfigEntry, LumagenCoordinator, lumagen_command
 from .entity import LumagenBaseEntity
 
 # Friendly command name -> Lumagen wire command (no CR). Wire values come
@@ -139,12 +139,15 @@ class LumagenRemote(LumagenBaseEntity, RemoteEntity):
     def is_on(self) -> bool | None:
         return self.coordinator.data.power_on
 
+    @lumagen_command
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self.coordinator.client.power_on()
 
+    @lumagen_command
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.client.standby()
 
+    @lumagen_command
     async def async_send_command(self, command: Iterable[str], **kwargs: Any) -> None:
         num_repeats: int = kwargs.get(ATTR_NUM_REPEATS, DEFAULT_NUM_REPEATS)
         delay: float = kwargs.get(ATTR_DELAY_SECS, DEFAULT_DELAY_SECS)

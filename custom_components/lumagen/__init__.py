@@ -39,7 +39,7 @@ from .const import (
     SERVICE_SEND_RAW_COMMAND,
     SERVICE_SET_INPUT_LABEL,
 )
-from .coordinator import LumagenConfigEntry, LumagenCoordinator
+from .coordinator import LumagenConfigEntry, LumagenCoordinator, lumagen_command
 from .release_coordinator import LumagenReleaseCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -191,6 +191,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
     if all(hass.services.has_service(DOMAIN, name) for name in _DOMAIN_SERVICES):
         return
 
+    @lumagen_command
     async def _handle_send_raw_command(call: ServiceCall) -> None:
         command: str = call.data[ATTR_COMMAND]
         cr: bool = call.data[ATTR_CR]
@@ -201,6 +202,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
         # the response stream they're watching.
         await coordinator.client.send_command(command, cr=cr, refresh=False)
 
+    @lumagen_command
     async def _handle_send_osd_message(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call)
         block_char: str | None = call.data.get(ATTR_BLOCK_CHAR)
@@ -218,6 +220,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
             center=call.data[ATTR_CENTER],
         )
 
+    @lumagen_command
     async def _handle_set_input_label(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call)
         await coordinator.client.set_input_label(
@@ -226,6 +229,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
             memory=call.data[ATTR_MEMORY],
         )
 
+    @lumagen_command
     async def _handle_restart_input(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call)
         await coordinator.client.restart_input(call.data.get(ATTR_INPUT, "all"))

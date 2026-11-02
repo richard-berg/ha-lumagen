@@ -11,7 +11,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import LumagenConfigEntry, LumagenCoordinator
+from .coordinator import LumagenConfigEntry, LumagenCoordinator, lumagen_command
 from .entity import LumagenBaseEntity
 
 
@@ -160,5 +160,6 @@ class LumagenButton(LumagenBaseEntity, ButtonEntity):
         super().__init__(coordinator, key=description.key)
         self.entity_description = description
 
+    @lumagen_command
     async def async_press(self) -> None:
         await self.entity_description.press_fn(self.coordinator.client)

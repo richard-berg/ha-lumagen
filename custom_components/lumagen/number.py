@@ -33,7 +33,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import LumagenConfigEntry, LumagenCoordinator
+from .coordinator import LumagenConfigEntry, LumagenCoordinator, lumagen_command
 from .entity import LumagenBaseEntity
 
 
@@ -147,6 +147,7 @@ class LumagenNumber(LumagenBaseEntity, NumberEntity):
             return from_state
         return self._optimistic_value
 
+    @lumagen_command
     async def async_set_native_value(self, value: float) -> None:
         level = int(value)
         if self.entity_description.key == "hdr_mapping_max_nits":

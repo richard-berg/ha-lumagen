@@ -43,7 +43,7 @@ from homeassistant.components.media_player import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import LumagenConfigEntry, LumagenCoordinator
+from .coordinator import LumagenConfigEntry, LumagenCoordinator, lumagen_command
 from .entity import LumagenBaseEntity
 
 # This integration surfaces inputs 1-8. The client accepts 1-19 for models
@@ -247,12 +247,15 @@ class LumagenMediaPlayer(LumagenBaseEntity, MediaPlayerEntity):
             "colorspace": state.colorspace.value if state.colorspace else None,
         }
 
+    @lumagen_command
     async def async_turn_on(self) -> None:
         await self.coordinator.client.power_on()
 
+    @lumagen_command
     async def async_turn_off(self) -> None:
         await self.coordinator.client.standby()
 
+    @lumagen_command
     async def async_select_source(self, source: str) -> None:
         # Resolve against the same unique mapping used to build source_list,
         # so the picked label maps to exactly one input.

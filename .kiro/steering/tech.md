@@ -77,7 +77,7 @@ To test against a real Lumagen during development, point the integration at the 
 
 | `aiolumagen` exception | Translation |
 |---|---|
-| `LumagenConnectionError` | Raise `ConfigEntryNotReady` from `async_setup_entry`, or mark device unavailable from the coordinator |
+| `LumagenConnectionError` | Raise `ConfigEntryNotReady` from `async_setup_entry`, or mark device unavailable from the coordinator. From an entity action or service, `@lumagen_command` raises `HomeAssistantError` (`not_connected`), never a bare "Unknown error" |
 | `LumagenCommandError` | Log a warning; don't surface to the user. Also subclasses `ValueError` |
 | `LumagenFirmwareImageError` | `HomeAssistantError` (`firmware_image_invalid`): the downloaded updater is unusable; device untouched |
 | `LumagenFirmwareAbortError` | `HomeAssistantError` (`firmware_aborted`): stopped before touching live firmware; nothing changed, retry |

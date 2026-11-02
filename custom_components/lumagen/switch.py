@@ -31,7 +31,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import LumagenConfigEntry, LumagenCoordinator
+from .coordinator import LumagenConfigEntry, LumagenCoordinator, lumagen_command
 from .entity import LumagenBaseEntity
 
 
@@ -139,8 +139,10 @@ class LumagenSwitch(LumagenBaseEntity, SwitchEntity):
             )
         await set_fn(self.coordinator.client, self.coordinator.data, enabled)
 
+    @lumagen_command
     async def async_turn_on(self, **kwargs: object) -> None:
         await self._async_set(True)
 
+    @lumagen_command
     async def async_turn_off(self, **kwargs: object) -> None:
         await self._async_set(False)

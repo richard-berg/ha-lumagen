@@ -390,6 +390,9 @@
     }
   },
   "exceptions": {
+    "not_connected": {
+      "message": "Could not reach the Lumagen: {error}. The integration reconnects on its own; try again once it is back."
+    },
     "firmware_update_active": {
       "message": "A Lumagen firmware update is in progress. Try again once it finishes."
     },

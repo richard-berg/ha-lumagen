@@ -10,9 +10,10 @@ only job of :meth:`_async_update_data` is to seed the initial state during
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiolumagen import (
     HdrGammaMode,
@@ -25,19 +26,45 @@ from aiolumagen import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DEFAULT_POLL_INTERVAL, DOMAIN, FIRMWARE_POWER_QUERY_INTERVAL
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable, Coroutine
 
     from .release_coordinator import LumagenReleaseCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 type LumagenConfigEntry = ConfigEntry[LumagenCoordinator]
+
+
+def lumagen_command[**P, R](
+    func: Callable[P, Awaitable[R]],
+) -> Callable[P, Coroutine[Any, Any, R]]:
+    """Report a command on a down link as a clear error instead of "Unknown error".
+
+    Wraps every entity action and service that talks to the device. Home
+    Assistant shows a ``HomeAssistantError``'s translated message to the user;
+    anything else it reports as a generic "Unknown error", which is how a
+    ``LumagenConnectionError`` ("Transport is not connected") reached them
+    while the link was down.
+    """
+
+    @functools.wraps(func)
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return await func(*args, **kwargs)
+        except LumagenConnectionError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="not_connected",
+                translation_placeholders={"error": str(err)},
+            ) from err
+
+    return wrapper
 
 
 class LumagenCoordinator(DataUpdateCoordinator[LumagenState]):

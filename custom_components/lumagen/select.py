@@ -20,7 +20,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .coordinator import LumagenConfigEntry, LumagenCoordinator
+from .coordinator import LumagenConfigEntry, LumagenCoordinator, lumagen_command
 from .entity import LumagenBaseEntity
 
 
@@ -321,6 +321,7 @@ class LumagenSelect(LumagenBaseEntity, SelectEntity):
             return self._optimistic_option if self._optimistic_option in options else None
         return current if current in options else None
 
+    @lumagen_command
     async def async_select_option(self, option: str) -> None:
         if self.entity_description.key == "hdr_gamma_mode":
             gamma_mode = _HDR_GAMMA_LABEL_TO_WIRE.get(option)
