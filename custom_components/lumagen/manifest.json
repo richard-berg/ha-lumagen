@@ -13,6 +13,6 @@
   "issue_tracker": "https://github.com/frankrosano/ha-lumagen/issues",
   "loggers": ["aiolumagen"],
   "quality_scale": "bronze",
-  "requirements": ["aiolumagen==0.12.3"],
+  "requirements": ["aiolumagen==0.12.4"],
   "version": "0.10.0"
 }
