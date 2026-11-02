@@ -243,6 +243,17 @@ async def test_on_success_powered_down_repowers(
     reload.assert_not_called()
 
 
+async def test_firmware_session_is_pinned_to_the_selected_device(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, fast_timeouts: None
+) -> None:
+    rig = await _rig(hass, aioclient_mock, power_on=True)
+    rig.client.state = dataclasses.replace(rig.client.state, model_number="1018", serial="003830")
+    await rig.install()
+    kwargs = rig.session.run_update.await_args.kwargs
+    assert kwargs["expected_model_number"] == "1018"
+    assert kwargs["expected_serial"] == "003830"
+
+
 async def test_off_success_powered_down_left_off(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, fast_timeouts: None
 ) -> None:
@@ -294,7 +305,7 @@ async def test_repower_timeout_is_not_an_install_failure(
     assert "power_on" not in rig.calls
     await firmware.async_notify_install_complete(hass, rig.coordinator, "030326", result, power)
     (message,) = notification_messages(hass)
-    assert "could not be powered back on" in message
+    assert "power state could not be confirmed" in message
 
 
 async def test_repower_when_unit_never_comes_back_on(
@@ -307,6 +318,19 @@ async def test_repower_when_unit_never_comes_back_on(
 
     assert power == firmware.POWER_RESTORE_FAILED
     assert rig.calls[-1] == "power_on"
+
+
+async def test_unconfirmed_power_down_cannot_claim_standby_was_restored(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, fast_timeouts: None
+) -> None:
+    rig = await _rig(hass, aioclient_mock, power_on=False)
+    rig.reports_standby_after_update = False
+    result, power = await rig.install()
+    assert result is PROMOTED
+    assert power == firmware.POWER_RESTORE_FAILED
+    await firmware.async_notify_install_complete(hass, rig.coordinator, "030326", result, power)
+    (message,) = notification_messages(hass)
+    assert "power state could not be confirmed" in message
 
 
 # ---------------------------------------------------------------------------
@@ -784,6 +808,143 @@ async def test_cancel_standby_is_bounded_and_does_not_swallow_cancel(
     assert rig.calls == ["power_on", "standby"]
     # The bound expired: the reason must say so rather than being blank.
     assert "could not return the Lumagen to standby: timed out" in caplog.text
+
+
+async def test_firmware_gate_covers_power_on_and_settle(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, fast_timeouts: None
+) -> None:
+    rig = await _rig(hass, aioclient_mock, power_on=False, result=NOTHING_WRITTEN)
+    observed: list[bool] = []
+
+    async def settle(_seconds: float) -> None:
+        observed.append(rig.coordinator.firmware_update_active)
+        with pytest.raises(HomeAssistantError) as err:
+            await hass.services.async_call(
+                DOMAIN, "send_raw_command", {"command": "$"}, blocking=True
+            )
+        assert err.value.translation_key == "firmware_update_active"
+
+    rig.settle.side_effect = settle
+    await rig.install()
+    assert observed == [True]
+    assert rig.coordinator.firmware_update_active is False
+
+
+@pytest.mark.parametrize("failure_stage", ["download", "power"])
+async def test_deferred_options_reload_survives_pre_session_failure(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    fast_timeouts: None,
+    failure_stage: str,
+) -> None:
+    rig = await _rig(
+        hass,
+        aioclient_mock,
+        power_on=False,
+        zip_status=503 if failure_stage == "download" else 200,
+    )
+    rig.answers_power_on = False
+    rig.coordinator.reload_pending = True
+    reload = _use(patch.object(hass.config_entries, "async_schedule_reload"))
+    with pytest.raises(HomeAssistantError):
+        await rig.install()
+    reload.assert_called_once_with(rig.coordinator.config_entry.entry_id)
+    assert not rig.coordinator.reload_pending
+    assert not rig.coordinator.firmware_update_active
+    assert not rig.coordinator.firmware_lock.locked()
+    rig.session_factory.assert_not_called()
+
+
+async def test_deferred_options_reload_survives_pre_session_cancellation(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, fast_timeouts: None
+) -> None:
+    rig = await _rig(hass, aioclient_mock, power_on=False)
+    reload = _use(patch.object(hass.config_entries, "async_schedule_reload"))
+
+    async def settle(_seconds: float) -> None:
+        rig.coordinator.reload_pending = True
+        raise asyncio.CancelledError
+
+    rig.settle.side_effect = settle
+    with pytest.raises(asyncio.CancelledError):
+        await rig.install()
+    reload.assert_called_once_with(rig.coordinator.config_entry.entry_id)
+    assert not rig.coordinator.firmware_update_active
+    assert not rig.coordinator.firmware_lock.locked()
+
+
+async def test_unload_during_power_settle_cannot_start_a_firmware_session(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, fast_timeouts: None
+) -> None:
+    rig = await _rig(hass, aioclient_mock, power_on=False)
+
+    async def settle(_seconds: float) -> None:
+        assert not await hass.config_entries.async_unload(rig.coordinator.config_entry.entry_id)
+
+    rig.settle.side_effect = settle
+    with pytest.raises(HomeAssistantError) as err:
+        await rig.install()
+    assert err.value.translation_key == "firmware_aborted"
+    rig.session_factory.assert_not_called()
+    assert "stop" in rig.calls
+    assert "start" not in rig.calls
+    await _shutdown_stuck_entry(rig)
+
+
+async def test_rejected_second_installer_cannot_lift_first_installers_gate(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, fast_timeouts: None
+) -> None:
+    rig = await _rig(hass, aioclient_mock, power_on=True, result=NOTHING_WRITTEN)
+
+    async def concurrent_install() -> None:
+        with pytest.raises(HomeAssistantError) as err:
+            await rig.install()
+        assert err.value.translation_key == "firmware_update_in_progress"
+        assert rig.coordinator.firmware_update_active
+        assert rig.coordinator.firmware_lock.locked()
+
+    rig.during_session = concurrent_install
+    await rig.install()
+    assert rig.session.run_update.await_count == 1
+    assert not rig.coordinator.firmware_update_active
+
+
+@pytest.mark.parametrize("reason", ["options", "resume_failure"])
+async def test_real_deferred_reload_waits_for_install_service_cleanup(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    fast_timeouts: None,
+    reason: str,
+) -> None:
+    rig = await _rig(hass, aioclient_mock, power_on=True, result=NOTHING_WRITTEN)
+    entry = rig.coordinator.config_entry
+
+    async def change_options() -> None:
+        hass.config_entries.async_update_entry(entry, options={"poll_interval": 30})
+        async with asyncio.timeout(1):
+            while not rig.coordinator.reload_pending:
+                await asyncio.sleep(0)
+
+    if reason == "options":
+        rig.during_session = change_options
+    else:
+        rig.client.start.side_effect = [LumagenConnectionError("rebooting"), None]
+    update_id = next(state.entity_id for state in hass.states.async_all("update"))
+    factory = _use(
+        patch(
+            "custom_components.lumagen.coordinator.create_lumagen_client",
+            AsyncMock(return_value=rig.client),
+        )
+    )
+    await hass.services.async_call("update", "install", {"entity_id": update_id}, blocking=True)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data is not rig.coordinator
+    assert factory.await_count == 1
+    state = hass.states.get(update_id)
+    assert state is not None
+    assert state.attributes["in_progress"] is False
+    assert state.attributes["update_percentage"] is None
 
 
 # --- Download redirect policy ----------------------------------------------

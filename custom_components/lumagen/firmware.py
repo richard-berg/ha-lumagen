@@ -331,12 +331,13 @@ async def _async_restore_power(
                     return POWER_RESTORE_FAILED
                 return POWER_RESTORED
             if result.powered_down:
-                # It was off before we started; Z97 left it off. Done.
+                await coordinator.async_wait_for_power(False, FIRMWARE_POST_UPDATE_STANDBY_TIMEOUT)
                 return POWER_LEFT_OFF
             if auto_powered:
                 # Nothing needed a reboot (e.g. the plan found nothing to
                 # write), but we turned the unit on, so turn it back off.
                 await client.standby()
+                await coordinator.async_wait_for_power(False, FIRMWARE_POST_UPDATE_STANDBY_TIMEOUT)
                 return POWER_STANDBY
             return POWER_UNCHANGED
 
@@ -349,9 +350,10 @@ async def _async_restore_power(
         )
         if auto_powered and provably_unchanged:
             await client.standby()
+            await coordinator.async_wait_for_power(False, FIRMWARE_POST_UPDATE_STANDBY_TIMEOUT)
             return POWER_STANDBY
-    except LumagenError as err:
-        _LOGGER.warning("Could not restore the Lumagen's power state: %s", err)
+    except (TimeoutError, LumagenError) as err:
+        _LOGGER.warning("Could not restore the Lumagen's power state: %s", str(err) or "timed out")
         return POWER_RESTORE_FAILED
     return POWER_UNCHANGED
 
@@ -408,15 +410,14 @@ async def _async_finish(
                 was_on=was_on,
                 auto_powered=auto_powered,
             )
-        elif result is not None and result.powered_down and was_on:
+        elif result is not None and result.powered_down:
             power = POWER_RESTORE_FAILED
     except Exception:
         _LOGGER.exception("Unexpected error cleaning up after the Lumagen firmware session")
     finally:
         coordinator.async_set_firmware_update_active(False)
-        if entry_loaded and (not resumed or coordinator.reload_pending):
-            coordinator.reload_pending = False
-            hass.config_entries.async_schedule_reload(coordinator.config_entry.entry_id)
+        if entry_loaded and not resumed:
+            coordinator.reload_pending = True
     return power
 
 
@@ -430,8 +431,8 @@ async def async_notify_install_complete(
     """Tell the user a real install finished, and where power was left.
 
     The Z97 power-off is presented as the expected end of an update, not a
-    fault. A failed repower is its own notification — the install still
-    succeeded, but the user needs to know the unit is sitting in standby.
+    fault. An unconfirmed power restore is its own notification: the install
+    succeeded, but the user must check which power state the unit reached.
     """
     if power == POWER_RESTORE_FAILED:
         await async_notify(hass, coordinator, "firmware_repower_failed", {"version": version})
@@ -460,6 +461,31 @@ def _map_error(err: Exception) -> HomeAssistantError | None:
 
 
 async def async_install_firmware(
+    hass: HomeAssistant,
+    coordinator: LumagenCoordinator,
+    listing: ReleaseListing,
+    *,
+    progress: ProgressCallback,
+) -> tuple[UpdateResult, str]:
+    """Run an exclusive install, including cleanup of failed preparation."""
+    try:
+        return await _async_install_firmware(hass, coordinator, listing, progress=progress)
+    finally:
+        # A concurrent caller rejected by the lock must not clean up its owner.
+        if not coordinator.firmware_lock.locked():
+            if coordinator.firmware_update_active:
+                coordinator.async_set_firmware_update_active(False)
+            entry = coordinator.config_entry
+            if (
+                coordinator.reload_pending
+                and hass.config_entries.async_get_entry(entry.entry_id) is entry
+                and entry.state is ConfigEntryState.LOADED
+            ):
+                coordinator.reload_pending = False
+                hass.config_entries.async_schedule_reload(entry.entry_id)
+
+
+async def _async_install_firmware(
     hass: HomeAssistant,
     coordinator: LumagenCoordinator,
     listing: ReleaseListing,
@@ -504,20 +530,28 @@ async def async_install_firmware(
         # Recorded after the download (which can take minutes, during which the
         # user may switch the unit on or off) and before any power action: this
         # is what gets restored.
-        was_on = coordinator.client.state.power_on
+        selected_state = coordinator.client.state
+        was_on = selected_state.power_on
         if was_on is None:
             raise _error("firmware_power_unknown")
 
+        coordinator.async_set_firmware_update_active(True)
         auto_powered = False
         if not was_on:
             await _async_auto_power_on(coordinator)
             auto_powered = True
 
-        coordinator.async_set_firmware_update_active(True)
         touched_device = False
         result: UpdateResult | None = None
         try:
             await coordinator.async_pause_client()
+            if (
+                hass.config_entries.async_get_entry(entry.entry_id) is not entry
+                or entry.state is not ConfigEntryState.LOADED
+            ):
+                raise LumagenFirmwareAbortError(
+                    f"the integration was unloaded during power-on ({entry.state})"
+                )
             # The entry's own URL, verbatim. Inside HA that's
             # esphome-hass://esphome/<entry>?port_name=Lumagen, which carries no
             # PSK; building an esphome:// URL here would reintroduce the
@@ -530,6 +564,8 @@ async def async_install_firmware(
                     bundle,
                     baudrate=FIRMWARE_UPDATE_BAUDRATE,
                     progress=progress,
+                    expected_model_number=selected_state.model_number,
+                    expected_serial=selected_state.serial,
                 )
         except asyncio.CancelledError:
             await _async_finish(

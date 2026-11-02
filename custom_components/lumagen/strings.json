@@ -303,7 +303,7 @@
       "message": "The firmware update failed and its outcome could not be confirmed:\n\n{error}\n\nThe Lumagen was deliberately left as it is. Retry the update before power-cycling it."
     },
     "firmware_repower_failed": {
-      "message": "Firmware {version} was installed, and the Lumagen powered off to load it as expected, but it could not be powered back on automatically. Turn it on with the remote or the Power on button."
+      "message": "Firmware {version} was installed, but the previous power state could not be confirmed or restored. Check the Lumagen and set its power state with the remote or Home Assistant."
     },
     "firmware_update_complete_notification": {
       "message": "Firmware {version} is installed. The Lumagen powered off to load the new firmware, which is expected. {power}"

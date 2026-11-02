@@ -106,12 +106,14 @@ The **Firmware** update entity watches Lumagen's [release page](https://www.luma
 > **Use at your own risk.** This is an independent, reverse-engineered implementation with no association with or endorsement by Lumagen, Inc. It has been tested on one Radiance Pro 4242. Read the [aiolumagen firmware warning](https://github.com/frankrosano/aiolumagen#firmware-updates) before your first install.
 
 - **Checking.** The release page is checked once a day. The updater zip (~3 MB) is downloaded only when you press **Install**, and is handled in memory. Disable the entity to stop all checks.
+- **Identity.** Before entering update mode, the session rechecks the selected unit's known model number and nonzero serial. A missing or all-zero serial cannot distinguish two otherwise-identical units.
 - **Channel.** Set under the integration's **Configure** options. **Beta** (the default) offers the newest release of any label, since Lumagen rarely posts Production builds; "Production candidate" counts as beta. **Production** offers only releases labelled Production.
 - **Standby.** If the Lumagen is in standby when you install, it's powered on automatically, given 15 seconds to finish starting up, and then updated.
 - **The unit powers off at the end of a successful update. That's expected**: it's how the Lumagen loads new firmware. Power is then restored to how it was: if it was on, it's powered back on; if it was off, it's left off.
-- **During the update** every other Lumagen entity shows as unavailable and the `lumagen.*` services refuse. The update entity shows progress. A section-0-only update takes about a minute. One that also rewrites section 1 is listed by Lumagen as about five minutes; the one such install tested from Home Assistant took about 7½.
-- **Don't restart Home Assistant or reload the integration while an update is running.** Changing the integration's options mid-update is safe: the reload waits until the update finishes.
+- **During the update**, including automatic power-on, settling and recovery, every other Lumagen entity shows as unavailable and commands refuse. The download itself leaves normal controls available. The update entity shows progress. A section-0-only update takes about a minute. One that also rewrites section 1 is listed by Lumagen as about five minutes; the one such install tested from Home Assistant took about 7½.
+- **Don't restart Home Assistant or reload the integration while an update is running.** A manual unload/reload is refused to protect the transfer; Home Assistant can mark the entry **Failed to unload**, requiring a restart after the install ends. Changing the integration's options mid-update is safe: its reload waits until the install finishes, even if downloading or powering on fails.
 - **If an update fails**, read the message and retry before power-cycling the unit. An update that stops before touching live firmware leaves it unchanged.
+- Power-restoration success requires device readback, not just a successful command write. If the expected state cannot be confirmed after updating, a persistent notification asks you to check the unit.
 
 ### Tested on hardware
 

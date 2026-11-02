@@ -35,6 +35,33 @@ its own expectation says.
 | I9 | One owner: never a second connection to the port. | A: `fault_proxy.py` (concurrent connections = 0), `monitor` (serial handles ≤ 1) |
 | I10 | Entities are stable: the same entities and entity IDs after restarts, reloads, reconnects and re-adding the entry; no `_2` duplicates. | A: `monitor` (entity count). O: entity list |
 
+## Before attaching hardware
+
+Run both repositories' automated suites in their existing development venvs:
+
+```bash
+.venv/bin/python -m pytest -q
+(cd ../aiolumagen && .venv/bin/python -m pytest -q)
+```
+
+The integration's [adversarial tests](../tests/test_adversarial.py) cover
+overlapping compound controls, stale readback, command gating across firmware
+ownership changes, invalid target routing, OSD partial writes, 2,000 seeded
+label configurations, repeated outage/reload cycles and cancellation-listener
+cleanup. [Firmware orchestration tests](../tests/test_firmware_install.py)
+also inject preparation failures, cancellation, concurrent installs and unloads
+during download, power-on and transfer, and exercise actual deferred reloads
+and power-restoration confirmation. [Cross-layer TCP tests](../tests/test_stack_lifecycle.py)
+run Home Assistant with the real library against fragmented replies, dropped
+connections and continuous damaged traffic, checking identity, state, one-owner
+recovery and query-only startup. These use synthetic data, not the physical unit.
+
+Passing these is not hardware qualification: RS-232 has no checksum, simulated
+devices cannot establish firmware timing, and only the hardware soak can
+establish the memory/day and recovery deadlines above. Develop against the
+editable sibling library; before release, publish its fixes and update the
+integration's pinned library requirement.
+
 ## The rig
 
 ```text
@@ -276,7 +303,7 @@ Then from Home Assistant, with the entry enabled:
 | --- | --- | --- | --- |
 | 10.5 | The update entity on each channel. | Offers the newest release for the channel; release notes. | O |
 | 10.6 | Install with the unit **on**. | Progress rises once from 0 to 100; other entities unavailable and services refused during it; the unit powers off at the end, then on; the firmware sensor shows the new version. | O; A: `monitor` (an explained outage) |
-| 10.7 | Mid-install: reload the entry, change options, press other buttons. | The reload waits; buttons and services are refused; the install completes. | O |
+| 10.7 | Mid-install: change options, press other buttons. Separately test a manual reload only when prepared to restart HA after the install. | Options reload waits, including after a preparation failure; buttons and services are refused from power-on through recovery. A manual reload/unload is deliberately refused and can leave **Failed to unload** until HA restarts. This is a known exception to I1, not a passing recovery test. | O |
 | 10.8 | Install with the unit in **standby** (needs a newer release, or a second unit). | Powered on, waits 15 s, updates, left off. Not tested anywhere yet. | O |
 
 Record each run's duration and flush retries.
