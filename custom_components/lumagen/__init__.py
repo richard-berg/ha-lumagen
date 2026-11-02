@@ -9,8 +9,9 @@ import voluptuous as vol
 from aiolumagen import INPUT_LABEL_MAX_LENGTH
 from homeassistant.const import ATTR_AREA_ID, ATTR_DEVICE_ID, ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.util.hass_dict import HassKey
 
 from . import coordinator as _coordinator
 from .const import (
@@ -43,6 +44,16 @@ from .coordinator import LumagenConfigEntry, LumagenCoordinator, lumagen_command
 from .release_coordinator import LumagenReleaseCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+_ANNOUNCED_OUTAGES: HassKey[set[str]] = HassKey(f"{DOMAIN}_announced_outages")
+"""Entries whose device is unreachable and has already been reported so.
+
+Every setup attempt builds a new client, and a new client would otherwise
+report the outage again: once per setup retry, about 45 warnings an hour at
+Home Assistant's retry backoff. Setup failing, or an unload with the device
+unreachable, marks the entry; setup finding the device answering clears it.
+Process-lifetime only, so the first attempt after a restart still says why.
+"""
 
 
 # Optional routing for the rare multi-Lumagen setup. These must be declared on
@@ -108,11 +119,19 @@ _RESTART_INPUT_SCHEMA = vol.Schema(
 async def async_setup_entry(hass: HomeAssistant, entry: LumagenConfigEntry) -> bool:
     """Set up a Lumagen from a config entry."""
     poll_interval = entry.options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
+    announced = hass.data.setdefault(_ANNOUNCED_OUTAGES, set())
     client = await _coordinator.create_lumagen_client(
-        entry.data[CONF_URL], poll_interval=poll_interval
+        entry.data[CONF_URL],
+        poll_interval=poll_interval,
+        outage_announced=entry.entry_id in announced,
     )
     lumagen_coordinator = LumagenCoordinator(hass, entry, client)
-    await lumagen_coordinator.async_config_entry_first_refresh()
+    try:
+        await lumagen_coordinator.async_config_entry_first_refresh()
+    except ConfigEntryNotReady:
+        announced.add(entry.entry_id)
+        raise
+    _note_outage(hass, entry, client.available)
     # Deliberately not refreshed here: lumagen.com must never delay or fail
     # setup. The update entity triggers the first check when it's added.
     lumagen_coordinator.release_coordinator = LumagenReleaseCoordinator(hass, entry)
@@ -159,6 +178,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: LumagenConfigEntry) -> 
         return False
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
+    # Read before stopping: a stopped client never reports available.
+    _note_outage(hass, entry, entry.runtime_data.client.available)
     await entry.runtime_data.async_shutdown()
     # Tear down the service when the last config entry goes away. HA's
     # service registry doesn't support per-entry services natively, so we
@@ -168,6 +189,20 @@ async def async_unload_entry(hass: HomeAssistant, entry: LumagenConfigEntry) -> 
         for service in _DOMAIN_SERVICES:
             hass.services.async_remove(DOMAIN, service)
     return True
+
+
+def _note_outage(hass: HomeAssistant, entry: LumagenConfigEntry, available: bool) -> None:
+    """Record whether the entry's device is in an outage that has been reported.
+
+    An unavailable client has reported it: either it announced the outage, or
+    its own startup handshake failed and said so (unless it was built quiet
+    because the outage was already announced).
+    """
+    announced = hass.data.setdefault(_ANNOUNCED_OUTAGES, set())
+    if available:
+        announced.discard(entry.entry_id)
+    else:
+        announced.add(entry.entry_id)
 
 
 _DOMAIN_SERVICES = (

@@ -323,13 +323,21 @@ def _stale_timeout_for(poll_interval: float) -> float:
 
 
 async def create_lumagen_client(
-    url: str, poll_interval: float = DEFAULT_POLL_INTERVAL
+    url: str,
+    poll_interval: float = DEFAULT_POLL_INTERVAL,
+    *,
+    outage_announced: bool = False,
 ) -> LumagenClient:
-    """Factory used by both config-flow validation and entry setup."""
+    """Factory used by both config-flow validation and entry setup.
+
+    ``outage_announced`` is for a setup attempt during an outage already
+    reported, so the new client's failed handshake doesn't report it again.
+    """
     transport = LumagenTransport(url)
     return LumagenClient(
         transport,
         power_poll_interval=poll_interval,
         status_poll_interval=poll_interval,
         stale_timeout=_stale_timeout_for(poll_interval),
+        outage_announced=outage_announced,
     )
