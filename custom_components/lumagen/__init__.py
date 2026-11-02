@@ -7,6 +7,7 @@ from typing import Any
 
 import voluptuous as vol
 from aiolumagen import INPUT_LABEL_MAX_LENGTH
+from aiolumagen.commands import osd_block_char_command, osd_message_command
 from homeassistant.const import ATTR_AREA_ID, ATTR_DEVICE_ID, ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
@@ -216,10 +217,8 @@ _DOMAIN_SERVICES = (
 def _async_register_services(hass: HomeAssistant) -> None:
     """Idempotently register the domain-level send_raw_command service.
 
-    The service is keyed off the integration domain and routes to the
-    first loaded Lumagen config entry. If you have multiple Lumagens
-    (rare), call the service with a target's device_id so it can be
-    routed; otherwise it picks whatever entry is loaded.
+    The service is keyed off the integration domain. With multiple Lumagens,
+    a target must resolve to exactly one loaded entry.
     """
     # Checks every service rather than one as a proxy, so adding a service to
     # _DOMAIN_SERVICES can't be silently skipped on a second config entry.
@@ -241,19 +240,29 @@ def _async_register_services(hass: HomeAssistant) -> None:
     async def _handle_send_osd_message(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call)
         block_char: str | None = call.data.get(ATTR_BLOCK_CHAR)
-        if block_char is not None:
-            # Nominate the bar character before the message that uses it, so a
-            # volume/progress bar is one service call rather than two. The
-            # setting is global and sticky on the device — every later message
-            # renders that character as a block too.
-            await coordinator.client.set_osd_block_char(block_char)
-        await coordinator.client.show_message(
-            call.data.get(ATTR_MESSAGE),
+        message = call.data.get(ATTR_MESSAGE)
+        options = {
+            "line1": call.data.get(ATTR_LINE1),
+            "line2": call.data.get(ATTR_LINE2),
+            "duration": call.data[ATTR_DURATION],
+            "center": call.data[ATTR_CENTER],
+        }
+        # Validate both commands before changing the device's sticky setting.
+        osd_message_command(
+            text=message,
             line1=call.data.get(ATTR_LINE1),
             line2=call.data.get(ATTR_LINE2),
             duration=call.data[ATTR_DURATION],
             center=call.data[ATTR_CENTER],
         )
+        if block_char is not None:
+            osd_block_char_command(block_char)
+        async with coordinator.osd_lock:
+            coordinator.async_check_command_allowed()
+            if block_char is not None:
+                await coordinator.client.set_osd_block_char(block_char)
+            coordinator.async_check_command_allowed()
+            await coordinator.client.show_message(message, **options)
 
     @lumagen_command
     async def _handle_set_input_label(call: ServiceCall) -> None:
@@ -329,15 +338,18 @@ def _resolve_target_entry(
 
     Raises if a device/entity target is given that doesn't match any
     loaded Lumagen entry, so a misrouted automation fails loudly instead
-    of quietly commanding the wrong unit. An ``area_id``-only target
-    isn't resolved (there's no sensible per-area routing for a single
-    piece of AV gear) and falls back to the first loaded entry.
+    of quietly commanding the wrong unit. Area targets and ambiguous
+    multi-device calls are refused rather than silently partially applied.
     """
     from homeassistant.helpers import device_registry as dr
     from homeassistant.helpers import entity_registry as er
 
     device_ids: list[str] = list(call.data.get(ATTR_DEVICE_ID) or [])
     entity_ids: list[str] = list(call.data.get(ATTR_ENTITY_ID) or [])
+    if call.data.get(ATTR_AREA_ID):
+        raise ServiceValidationError(
+            "Area targets are not supported; select exactly one Lumagen device or entity."
+        )
 
     # Resolve any entity targets to their owning device.
     if entity_ids:
@@ -348,16 +360,30 @@ def _resolve_target_entry(
                 device_ids.append(entity.device_id)
 
     if not device_ids:
+        if entity_ids:
+            raise ServiceValidationError(
+                f"None of the targeted entities have a device linked to a loaded Lumagen "
+                f"config entry: {entity_ids!r}"
+            )
+        if len(loaded_entries) != 1:
+            raise ServiceValidationError(
+                "Multiple Lumagens are loaded; target exactly one device or entity."
+            )
         return loaded_entries[0]
 
     dev_reg = dr.async_get(hass)
+    matched_entry_ids: set[str] = set()
     for device_id in device_ids:
         device = dev_reg.async_get(device_id)
         if device is None:
             continue
         for entry in loaded_entries:
             if entry.entry_id in _device_entry_ids(device):
-                return entry
+                matched_entry_ids.add(entry.entry_id)
+    if len(matched_entry_ids) > 1:
+        raise ServiceValidationError("Target exactly one Lumagen device or entity per call.")
+    if matched_entry_ids:
+        return next(entry for entry in loaded_entries if entry.entry_id in matched_entry_ids)
     raise ServiceValidationError(
         f"None of the targeted devices are linked to a loaded Lumagen config entry: {device_ids!r}"
     )

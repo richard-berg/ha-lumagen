@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from aiolumagen import (
     HdrGammaMode,
     LumagenClient,
+    LumagenCommandError,
     LumagenConnectionError,
     LumagenError,
     LumagenState,
@@ -26,7 +27,7 @@ from aiolumagen import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DEFAULT_POLL_INTERVAL, DOMAIN, FIRMWARE_POWER_QUERY_INTERVAL
@@ -44,23 +45,33 @@ type LumagenConfigEntry = ConfigEntry[LumagenCoordinator]
 def lumagen_command[**P, R](
     func: Callable[P, Awaitable[R]],
 ) -> Callable[P, Coroutine[Any, Any, R]]:
-    """Report a command on a down link as a clear error instead of "Unknown error".
+    """Translate connection/validation errors and enforce firmware ownership.
 
     Wraps every entity action and service that talks to the device. Home
     Assistant shows a ``HomeAssistantError``'s translated message to the user;
     anything else it reports as a generic "Unknown error", which is how a
     ``LumagenConnectionError`` ("Transport is not connected") reached them
-    while the link was down.
+    while the link was down. Invalid commands also need an actionable error,
+    and entity availability alone cannot gate already-running actions.
     """
 
     @functools.wraps(func)
     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        coordinator = getattr(args[0], "coordinator", None) if args else None
+        if isinstance(coordinator, LumagenCoordinator):
+            coordinator.async_check_command_allowed()
         try:
             return await func(*args, **kwargs)
         except LumagenConnectionError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="not_connected",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        except LumagenCommandError as err:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_command",
                 translation_placeholders={"error": str(err)},
             ) from err
 
@@ -108,6 +119,10 @@ class LumagenCoordinator(DataUpdateCoordinator[LumagenState]):
         self._last_sharpness_enabled: bool | None = None
         self._last_sharpness_level: int | None = None
         self._last_sharpness_sensitivity: SharpnessSensitivity | None = None
+        self._sharpness_report_generation: int | None = None
+        self._sharpness_lock = asyncio.Lock()
+        self._hdr_mapping_lock = asyncio.Lock()
+        self.osd_lock = asyncio.Lock()
 
         # Firmware-update coordination. While ``firmware_update_active`` is set
         # the client is stopped (serial_proxy serves one subscriber, and the
@@ -126,6 +141,14 @@ class LumagenCoordinator(DataUpdateCoordinator[LumagenState]):
         """Flip the update gate and let every entity re-evaluate availability."""
         self.firmware_update_active = active
         self.async_update_listeners()
+
+    @callback
+    def async_check_command_allowed(self) -> None:
+        """Reject actions that overlap the firmware session's ownership."""
+        if self.firmware_update_active:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="firmware_update_active"
+            )
 
     async def async_pause_client(self) -> None:
         """Release the serial link for a firmware session. Idempotent."""
@@ -234,17 +257,19 @@ class LumagenCoordinator(DataUpdateCoordinator[LumagenState]):
     def effective_sharpness(self) -> tuple[bool, int, SharpnessSensitivity]:
         """Best-known ``(enabled, level, sensitivity)`` for a ZY521 write.
 
-        Device-reported state wins; falls back to what we last wrote, then
-        to conservative defaults (off, level 4, normal sensitivity).
+        A new device report wins, including an unchanged report rejecting a
+        write. Until it arrives, preserve pending writes rather than merging
+        a second change with the stale pre-write snapshot.
         """
-        state = self.data
-        enabled = state.sharpness_enabled
+        state = self.client.state
+        pending = self._sharpness_report_generation == state.sharpness_report_generation
+        enabled = self._last_sharpness_enabled if pending else state.sharpness_enabled
         if enabled is None:
             enabled = self._last_sharpness_enabled
-        level = state.sharpness_level
+        level = self._last_sharpness_level if pending else state.sharpness_level
         if level is None:
             level = self._last_sharpness_level
-        sensitivity = state.sharpness_sensitivity
+        sensitivity = self._last_sharpness_sensitivity if pending else state.sharpness_sensitivity
         if sensitivity is None:
             sensitivity = self._last_sharpness_sensitivity
         return (
@@ -268,16 +293,36 @@ class LumagenCoordinator(DataUpdateCoordinator[LumagenState]):
         values are remembered so a follow-up change to a different field
         doesn't lose them if the device hasn't reported back yet.
         """
-        current_enabled, current_level, current_sensitivity = self.effective_sharpness()
-        new_enabled = current_enabled if enabled is None else enabled
-        new_level = current_level if level is None else level
-        new_sensitivity = current_sensitivity if sensitivity is None else sensitivity
-        await self.client.set_sharpness(
-            enabled=new_enabled, level=new_level, sensitivity=new_sensitivity
-        )
-        self._last_sharpness_enabled = new_enabled
-        self._last_sharpness_level = new_level
-        self._last_sharpness_sensitivity = new_sensitivity
+        async with self._sharpness_lock:
+            self.async_check_command_allowed()
+            current_enabled, current_level, current_sensitivity = self.effective_sharpness()
+            new_enabled = current_enabled if enabled is None else enabled
+            new_level = current_level if level is None else level
+            new_sensitivity = current_sensitivity if sensitivity is None else sensitivity
+            generation = self.client.state.sharpness_report_generation
+            await self.client.set_sharpness(
+                enabled=new_enabled, level=new_level, sensitivity=new_sensitivity
+            )
+            self._last_sharpness_enabled = new_enabled
+            self._last_sharpness_level = new_level
+            self._last_sharpness_sensitivity = new_sensitivity
+            self._sharpness_report_generation = generation
+
+    async def async_set_hdr_mapping(
+        self,
+        *,
+        display_max_nits: int | None = None,
+        gamma_mode: HdrGammaMode | None = None,
+    ) -> None:
+        """Serialize read-modify-write across the two write-only HDR controls."""
+        async with self._hdr_mapping_lock:
+            self.async_check_command_allowed()
+            nits = self.hdr_mapping_max_nits if display_max_nits is None else display_max_nits
+            gamma = self.hdr_mapping_gamma_mode if gamma_mode is None else gamma_mode
+            await self.client.set_hdr_intensity_mapping(display_max_nits=nits, gamma_mode=gamma)
+            self.hdr_mapping_max_nits = nits
+            self.hdr_mapping_gamma_mode = gamma
+            self.async_update_listeners()
 
     async def _async_update_data(self) -> LumagenState:
         """Seed the initial data after ``start()``.

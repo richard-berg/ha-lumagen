@@ -390,6 +390,9 @@
     }
   },
   "exceptions": {
+    "invalid_command": {
+      "message": "Invalid Lumagen command: {error}"
+    },
     "not_connected": {
       "message": "Could not reach the Lumagen: {error}. The integration reconnects on its own; try again once it is back."
     },

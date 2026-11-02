@@ -9,6 +9,7 @@ calling the helpers.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -38,9 +39,13 @@ def _sharpness_coordinator(state: LumagenState | None = None) -> LumagenCoordina
     client.set_sharpness = AsyncMock()
     coord.client = client
     coord.data = state if state is not None else LumagenState()
+    client.state = coord.data
     coord._last_sharpness_enabled = None
     coord._last_sharpness_level = None
     coord._last_sharpness_sensitivity = None
+    coord._sharpness_report_generation = None
+    coord._sharpness_lock = asyncio.Lock()
+    coord.firmware_update_active = False
     return coord
 
 
@@ -275,13 +280,16 @@ def test_closest_aspect_label_still_works() -> None:
 # ---------- Phase 2 HDR mapping (compound write via coordinator) ----------
 
 
-def _coordinator_with(client: MagicMock) -> MagicMock:
+def _coordinator_with(client: MagicMock) -> LumagenCoordinator:
     """Build a minimal coordinator stub with the HDR optimistic fields."""
-    coord = MagicMock()
+    coord = LumagenCoordinator.__new__(LumagenCoordinator)
     coord.client = client
     coord.data = LumagenState()
     coord.hdr_mapping_max_nits = 0
     coord.hdr_mapping_gamma_mode = "A"
+    coord._hdr_mapping_lock = asyncio.Lock()
+    coord.firmware_update_active = False
+    coord.async_update_listeners = MagicMock()
     return coord
 
 

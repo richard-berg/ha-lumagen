@@ -327,11 +327,9 @@ class LumagenSelect(LumagenBaseEntity, SelectEntity):
             gamma_mode = _HDR_GAMMA_LABEL_TO_WIRE.get(option)
             if gamma_mode is None:
                 return
-            await self.coordinator.client.set_hdr_intensity_mapping(
-                display_max_nits=self.coordinator.hdr_mapping_max_nits,
+            await self.coordinator.async_set_hdr_mapping(
                 gamma_mode=gamma_mode,
             )
-            self.coordinator.hdr_mapping_gamma_mode = gamma_mode
             self.async_write_ha_state()
             return
         if self.entity_description.key == "sharpness_sensitivity":

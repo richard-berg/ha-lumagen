@@ -156,6 +156,7 @@ class LumagenRemote(LumagenBaseEntity, RemoteEntity):
         wire_commands = [_COMMANDS.get(token, token) for token in command]
         for repeat in range(num_repeats):
             for index, wire in enumerate(wire_commands):
+                self.coordinator.async_check_command_allowed()
                 await self.coordinator.client.send_command(wire)
                 is_last = repeat == num_repeats - 1 and index == len(wire_commands) - 1
                 if delay and not is_last:

@@ -126,9 +126,25 @@ Not yet tested on hardware: a real install started from standby.
 
 - `lumagen.send_raw_command` — send any RS-232 command directly to the Lumagen. Useful for advanced features that aren't surfaced as entities (e.g. HDR test-pattern info frames during calibration). Pass `command` and optional `cr` (most `ZY`-prefixed commands need `cr: true`).
 
+Invalid device/entity targets fail rather than falling back to another device.
+With multiple Lumagens loaded, explicitly target exactly one device or entity;
+area targets and calls matching multiple Lumagens are rejected.
+OSD message calls validate before changing the sticky block character and keep
+that setting together with its message when calls overlap. Concurrent HDR and
+sharpness controls serialize their compound writes so changing one field does
+not reset another.
+
 ## Status
 
 Alpha / prototype. Not yet in the Marketplace/HACS catalog — add it from the badge under [Installation](#installation).
+
+### Unreleased hardening
+
+The current adversarial-hardening changes require the matching editable
+`aiolumagen` sibling checkout. Versions and the integration's published-library
+pin are intentionally unchanged while this development work is tested. Do not
+deploy this integration checkout against the older published library: first
+release the library fixes and update the pin together.
 
 ## License
 

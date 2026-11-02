@@ -153,11 +153,9 @@ class LumagenNumber(LumagenBaseEntity, NumberEntity):
         if self.entity_description.key == "hdr_mapping_max_nits":
             # Compound write: preserve the current gamma_mode from the
             # coordinator's optimistic state.
-            await self.coordinator.client.set_hdr_intensity_mapping(
+            await self.coordinator.async_set_hdr_mapping(
                 display_max_nits=level,
-                gamma_mode=self.coordinator.hdr_mapping_gamma_mode,
             )
-            self.coordinator.hdr_mapping_max_nits = level
             self.async_write_ha_state()
             return
         if self.entity_description.key == "sharpness_level":

@@ -159,16 +159,22 @@ class LumagenMediaPlayer(LumagenBaseEntity, MediaPlayerEntity):
         device report every input simply as "Input", with no number). Empty
         or duplicated labels are therefore replaced with the numbered
         ``Input N`` fallback, which is both unique and clearer; a distinct,
-        non-empty custom label is shown as-is. Built fresh on each read so a
-        relabel shows up without recreating the entity.
+        non-empty custom label is shown as-is unless it steals another input's
+        numbered fallback. Built fresh on each read so a relabel shows up
+        without recreating the entity.
         """
         labels = self.coordinator.data.input_labels
         raw = {n: (labels.get(n) or "").strip() for n in range(1, _INPUT_COUNT + 1)}
         counts = Counter(label for label in raw.values() if label)
+        fallbacks = {_fallback_label(n): n for n in raw}
         mapping: dict[str, int] = {}
         for n in range(1, _INPUT_COUNT + 1):
             label = raw[n]
-            display = label if label and counts[label] == 1 else _fallback_label(n)
+            display = (
+                label
+                if label and counts[label] == 1 and fallbacks.get(label, n) == n
+                else _fallback_label(n)
+            )
             mapping[display] = n
         return mapping
 
