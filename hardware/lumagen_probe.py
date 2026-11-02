@@ -84,6 +84,10 @@ class Skip(Exception):
     """A step can't run now; not a failure."""
 
 
+class RestoreError(HAError):
+    """The operator must restore the baseline before any more commands run."""
+
+
 class HA:
     """Minimal Home Assistant WebSocket client."""
 
@@ -304,15 +308,18 @@ def proxy_windows(path: Path, since: float) -> list[Window]:
             if event["kind"] == "clear":
                 for n in list(open_ended) if name == "all" else [name]:
                     if (window := open_ended.pop(n, None)) is not None:
-                        window.end = t
+                        window.end = min(window.end, t)
+                continue
+            if (previous := open_ended.pop(name, None)) is not None:
+                previous.end = min(previous.end, t)
+            value = event.get("value")
+            if value is False or value == 0 or (name == "eol" and value == "crlf"):
                 continue
             seconds = event.get("seconds")
             if name in INSTANT_FAULTS:
                 windows.append(Window(t, t, f"proxy {name}"))
-            elif seconds:
-                windows.append(Window(t, t + float(seconds), f"proxy {name}"))
             else:
-                window = Window(t, math.inf, f"proxy {name}")
+                window = Window(t, t + float(seconds) if seconds else math.inf, f"proxy {name}")
                 windows.append(window)
                 open_ended[name] = window
     return windows
@@ -694,6 +701,7 @@ class Step:
     impact: str  # none, subtle, sound, picture, power
     run: Callable[[Exerciser], Awaitable[float]]
     watch: str = ""
+    unverified: bool = False
 
 
 class Exerciser:
@@ -766,14 +774,25 @@ async def _change_and_restore(
     before = {k: ex.state(k) for k in keys}
     if unknown := [k for k, v in before.items() if v in UNKNOWN]:
         raise Skip(f"{unknown} unknown, so it couldn't be restored")
-    latency = await ex.set(change, new_value(before[change]))
-    await asyncio.sleep(2)
-    moved = {k: (before[k], ex.state(k)) for k in keep if ex.state(k) != before[k]}
-    original = float(before[change]) if change.startswith("number.") else before[change]
-    await ex.set(change, original)
-    if moved:
-        raise AssertionError(f"changing {change} also changed {moved}")
-    return latency
+    try:
+        latency = await ex.set(change, new_value(before[change]))
+        await asyncio.sleep(2)
+        moved = {k: (before[k], ex.state(k)) for k in keep if ex.state(k) != before[k]}
+        if moved:
+            raise AssertionError(f"changing {change} also changed {moved}")
+        return latency
+    finally:
+        errors = []
+        for key in keys:
+            original = float(before[key]) if key.startswith("number.") else before[key]
+            try:
+                await ex.set(key, original)
+            except (AssertionError, HAError, TimeoutError, ConnectionError) as err:
+                errors.append(f"{key}: {err}")
+        if errors:
+            raise RestoreError(
+                "Baseline restoration failed; stop and restore manually: " + "; ".join(errors)
+            )
 
 
 def _other_option(ex: Exerciser, key: str) -> str:
@@ -809,16 +828,22 @@ async def _raw_query(ex: Exerciser) -> float:
 async def _power_cycle(ex: Exerciser) -> float:
     if ex.state("binary_sensor.power") != "on":
         raise Skip("the Lumagen is in standby")
-    await ex.press("button.standby")
-    latency = await ex.wait_for("standby", lambda: ex.state("binary_sensor.power") == "off", 30)
-    await ex.press("button.power_on")
-    await ex.wait_for("power on", lambda: ex.state("binary_sensor.power") == "on", 60)
-    return latency
+    try:
+        await ex.press("button.standby")
+        return await ex.wait_for("standby", lambda: ex.state("binary_sensor.power") == "off", 30)
+    finally:
+        try:
+            await ex.press("button.power_on")
+            await ex.wait_for("power on", lambda: ex.state("binary_sensor.power") == "on", 60)
+        except (AssertionError, HAError, TimeoutError, ConnectionError) as err:
+            raise RestoreError(
+                f"Could not restore power-on; stop and restore manually: {err}"
+            ) from err
 
 
-def steps() -> list[Step]:
+def steps(*, allow_unverified: bool = False) -> list[Step]:
     on_off = {"on": "off", "off": "on"}
-    return [
+    result = [
         Step("query status", "none", lambda ex: ex.press("button.query_status")),
         Step("raw ZQS01", "none", _raw_query),
         Step(
@@ -868,6 +893,7 @@ def steps() -> list[Step]:
                 _others(HDR_MAPPING, "select.hdr_gamma_mode"),
             ),
             "HDR content only: tone mapping changes, then returns",
+            unverified=True,
         ),
         Step(
             "HDR max nits keeps gamma mode",
@@ -878,6 +904,7 @@ def steps() -> list[Step]:
                 lambda v: 1000.0 if float(v) != 1000.0 else 2000.0,
                 _others(HDR_MAPPING, "number.hdr_mapping_max_nits"),
             ),
+            unverified=True,
         ),
         Step(
             "minimum fan speed",
@@ -886,6 +913,7 @@ def steps() -> list[Step]:
                 ex, "number.fan_speed", lambda v: _neighbour(ex, "number.fan_speed", v), []
             ),
             "fan noise changes, then returns",
+            unverified=True,
         ),
         Step(
             "subtitle shift",
@@ -897,6 +925,7 @@ def steps() -> list[Step]:
                 [],
             ),
             "the picture shifts up, then back",
+            unverified=True,
         ),
         Step(
             "memory",
@@ -919,6 +948,7 @@ def steps() -> list[Step]:
                 ["sensor.current_input"],
             ),
             "the aspect changes, then back",
+            unverified=True,
         ),
         Step(
             "standby and power on",
@@ -927,6 +957,7 @@ def steps() -> list[Step]:
             "the Lumagen goes to standby, then powers back on",
         ),
     ]
+    return [step for step in result if allow_unverified or not step.unverified]
 
 
 async def exercise(args: argparse.Namespace) -> int:
@@ -939,12 +970,19 @@ async def exercise(args: argparse.Namespace) -> int:
     await ha.subscribe(ex.on_state, "subscribe_events", event_type="state_changed")
     ex.states = await ha.states(set(ents.values()))
     allowed = {"none", "subtle", *args.allow}
-    chosen = [s for s in steps() if s.impact in allowed]
+    all_steps = steps(allow_unverified=True)
+    chosen = [
+        s for s in all_steps if s.impact in allowed and (args.allow_unverified or not s.unverified)
+    ]
     latencies: dict[str, list[float]] = defaultdict(list)
     failures: list[str] = []
     skipped: Counter[str] = Counter()
+    for step in all_steps:
+        if step.impact in allowed and step.unverified and not args.allow_unverified:
+            skipped[f"{step.name}: needs verified baseline and --allow-unverified --operator"] += 1
     rng = random.Random(args.seed)
     journal.write("start", steps=[s.name for s in chosen], rounds=args.rounds)
+    aborted = False
     try:
         for round_no in range(1, args.rounds + 1):
             order = chosen[:]
@@ -954,6 +992,11 @@ async def exercise(args: argparse.Namespace) -> int:
                     print(f"\n>>> {step.name}. Watch for: {step.watch}", flush=True)
                 try:
                     latency = await step.run(ex)
+                except RestoreError as err:
+                    failures.append(f"round {round_no} {step.name}: {err}")
+                    journal.write("fail", step=step.name, error=str(err))
+                    aborted = True
+                    break
                 except (Skip, KeyError) as err:
                     skipped[f"{step.name}: {err}"] += 1
                     continue
@@ -966,13 +1009,15 @@ async def exercise(args: argparse.Namespace) -> int:
                 if args.operator and step.watch:
                     answer = await asyncio.to_thread(input, "    Did the screen do that? [y/n] ")
                     journal.write("operator", step=step.name, answer=answer.strip())
-                    if answer.strip().lower().startswith("n"):
+                    if answer.strip().lower() not in {"y", "yes"}:
                         failures.append(f"round {round_no} {step.name}: operator saw otherwise")
                 await asyncio.sleep(args.pause)
+            if aborted:
+                break
             if round_no < args.rounds:
                 await asyncio.sleep(args.interval)
     except asyncio.CancelledError:
-        pass
+        failures.append("exercise cancelled; verify the saved baseline before continuing")
     unsolicited = None
     if args.proxy_control:
         counters = json.loads(await proxy_ctl(args.proxy_control, "status"))["counters"]
@@ -1025,6 +1070,9 @@ MALFORMED = [
     "no_bang",
     "bad_power",
     "bad_firmware",
+    "bad_sharpness",
+    "nonfinite_hdr",
+    "overflow_suffix",
 ]
 
 SCENARIOS = [
@@ -1045,6 +1093,13 @@ SCENARIOS = [
     Scenario("short stall", ["stall on"], 30, "up"),
     Scenario("long stall", ["stall on"], 90, "down"),
     Scenario("device silent", ["drop-down on"], 120, "down"),
+    Scenario(
+        "noise-only traffic",
+        ["drop-down on", "repeat-inject bad_power 0.2 120"],
+        120,
+        "down",
+        identity_unchanged=True,
+    ),
     Scenario("commands lost", ["drop-up on"], 120, "down"),
     Scenario("connection closed", ["close"], 0, "either"),
     Scenario("connection reset", ["reset"], 0, "either"),
@@ -1133,7 +1188,6 @@ async def _ha_action(ha: HA, health: Health, action: str, entry_id: str, journal
                 await ha.reload_entry(entry_id)
             await asyncio.sleep(0.5)
         return
-    await health.wait(False, DETECT_DEADLINE)
     if action == "reload":
         journal.write("ha_action", action="reload")
         await ha.reload_entry(entry_id)
@@ -1176,6 +1230,11 @@ async def run_scenario(
         if sc.gap and i + 1 < sc.repeat:
             await asyncio.sleep(sc.gap)
     went_down = False
+    if sc.expect == "down":
+        limit = max(0.0, args.detect_deadline - (time.monotonic() - fault_start))
+        went_down = (not health.up) or await health.wait(False, limit) is not None
+        if not went_down:
+            problems.append(f"still connected {args.detect_deadline:.0f}s after fault start")
     if sc.ha_action:
         try:
             await _ha_action(ha, health, sc.ha_action, entry_id, journal)
@@ -1186,10 +1245,10 @@ async def run_scenario(
         if not await health.stays_up(max(0.0, hold_left)):
             problems.append("went unavailable")
     else:
-        limit = max(0.0, hold_left) + (args.detect_deadline if sc.expect == "down" else 3)
-        went_down = (not health.up) or await health.wait(False, limit) is not None
-        if sc.expect == "down" and not went_down:
-            problems.append(f"still connected {limit:.0f}s into the fault")
+        if sc.expect != "down":
+            went_down = (not health.up) or await health.wait(
+                False, max(0.0, hold_left) + 3
+            ) is not None
         remaining = sc.hold - (time.monotonic() - fault_start)
         if remaining > 0:
             await asyncio.sleep(remaining)
@@ -1235,6 +1294,13 @@ async def run_scenario(
 
 
 async def scenarios(args: argparse.Namespace) -> int:
+    chosen = [s for s in SCENARIOS if args.long or not s.long]
+    if args.only:
+        chosen = [s for s in chosen if any(o.lower() in s.name.lower() for o in args.only)]
+    if not chosen:
+        raise SystemExit(
+            "No scenarios selected; check --only and include --long for long scenarios"
+        )
     journal = Journal(args.out)
     ha = HA(args.url, load_token(args.token_file))
     await ha.connect()
@@ -1242,10 +1308,8 @@ async def scenarios(args: argparse.Namespace) -> int:
     ents = await ha.entities(entry["entry_id"])
     health = Health(ha, ents)
     await health.attach()
-    chosen = [s for s in SCENARIOS if args.long or not s.long]
-    if args.only:
-        chosen = [s for s in SCENARIOS if any(o.lower() in s.name.lower() for o in args.only)]
     results = []
+    cancelled = False
     try:
         for sc in chosen:
             journal.write("scenario", name=sc.name)
@@ -1253,6 +1317,7 @@ async def scenarios(args: argparse.Namespace) -> int:
             results.append(result)
             journal.write("result", **result)
     except asyncio.CancelledError:
+        cancelled = True
         await proxy_ctl(args.proxy_control, "clear")
     passed = sum(r["ok"] for r in results)
     print(f"\n{passed}/{len(results)} scenarios passed")
@@ -1260,9 +1325,16 @@ async def scenarios(args: argparse.Namespace) -> int:
         verdict = "PASS" if r["ok"] else "FAIL"
         details = "; ".join(r["problems"])
         print(f"  {verdict}  {r['scenario']:<28} recovery {r['recovery_s']}s  {details}")
-    journal.write("final", passed=passed, total=len(results), echo=False)
+    journal.write(
+        "final",
+        passed=passed,
+        total=len(results),
+        planned=len(chosen),
+        cancelled=cancelled,
+        echo=False,
+    )
     await ha.close()
-    args.exit_code = 0 if passed == len(results) else 1
+    args.exit_code = 0 if not cancelled and passed == len(chosen) else 1
     return args.exit_code
 
 
@@ -1329,6 +1401,11 @@ def main() -> None:
         help="also run steps that change the sound, picture or power",
     )
     p.add_argument("--operator", action="store_true", help="confirm what the screen shows")
+    p.add_argument(
+        "--allow-unverified",
+        action="store_true",
+        help="include controls needing a verified manual baseline; requires --operator",
+    )
     p.add_argument("--confirm-timeout", type=float, default=15)
     p.add_argument("--proxy-control", help="fault_proxy.py control address, to announce writes")
     p.add_argument("--seed", type=int)
@@ -1346,6 +1423,8 @@ def main() -> None:
     p.add_argument("--marks", type=Path, required=True)
 
     args = parser.parse_args()
+    if args.command == "exercise" and args.allow_unverified and not args.operator:
+        parser.error("--allow-unverified requires --operator and a manually verified baseline")
     args.exit_code = 0
     if args.command == "mark":
         sys.exit(mark(args))

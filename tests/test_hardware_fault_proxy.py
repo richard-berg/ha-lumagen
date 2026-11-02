@@ -102,6 +102,7 @@ async def rig(socket_enabled: None, tmp_path: Path) -> AsyncIterator[Rig]:
     async with asyncio.timeout(2):
         await proxy._upstream_ready.wait()
     yield Rig(proxy, server.sockets[0].getsockname()[1], device, tmp_path)
+    proxy.clear()
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
@@ -261,3 +262,82 @@ async def test_control_errors_and_status(rig: Rig) -> None:
     assert status["faults"] == {"noise": 0.5}
     await rig.ctl("clear")
     assert json.loads(await rig.ctl("status"))["faults"] == {}
+
+
+@pytest.mark.parametrize("command", ["close", "reset"])
+async def test_intentional_disconnects_have_fault_cause_records(rig: Rig, command: str) -> None:
+    _, writer = await rig.connect()
+    await asyncio.sleep(0)
+    assert await rig.ctl(command) == "ok"
+    assert any(event["name"] == command for event in rig.events("fault"))
+    writer.close()
+
+
+async def test_mute_one_report_preserves_other_traffic_and_expires(rig: Rig) -> None:
+    reader, writer = await rig.connect()
+    assert await rig.ctl("mute-report S01 0.3") == "ok"
+    writer.write(b"ZQS01")
+    await writer.drain()
+    assert await _silent(reader, 0.1)
+    assert rig.proxy.status()["muted_reports"] == ["S01"]
+    assert rig.proxy.counters.reports_muted == 1
+    await rig.ctl(r"inject !I30,Y4N\r\n")
+    assert await _read_line(reader) == b"!I30,Y4N\r\n"
+    await asyncio.sleep(0.3)
+    writer.write(b"ZQS01")
+    await writer.drain()
+    assert await _read_line(reader) == S01
+    assert rig.proxy.status()["muted_reports"] == []
+    writer.close()
+
+
+async def test_clear_cancels_report_mutes_and_repeated_downstream_injection(rig: Rig) -> None:
+    reader, writer = await rig.connect()
+    assert await rig.ctl("mute-report S01 30") == "ok"
+    assert await rig.ctl("repeat-inject bad_power 0.05 30") == "ok"
+    assert await _read_line(reader) == b"!S02,7\r\n"
+    assert await _read_line(reader) == b"!S02,7\r\n"
+    assert rig.device.received == b""
+    await rig.ctl("clear")
+    await _drain(reader)
+    assert await _silent(reader, 0.1)
+    assert not rig.proxy.status()["repeat_inject"]
+    assert not rig.proxy.status()["muted_reports"]
+    writer.write(b"ZQS01")
+    await writer.drain()
+    assert await _read_line(reader) == S01
+    writer.close()
+
+
+async def test_repeated_injection_expires_without_changing_other_faults(rig: Rig) -> None:
+    reader, writer = await rig.connect()
+    await rig.ctl("drop-down on 30")
+    assert await rig.ctl("repeat-inject bad_power 0.05 0.12") == "ok"
+    assert await _read_line(reader) == b"!S02,7\r\n"
+    await asyncio.sleep(0.2)
+    await _drain(reader)
+    assert await _silent(reader, 0.1)
+    assert rig.proxy.faults.drop_down
+    assert not rig.proxy.status()["repeat_inject"]
+    writer.close()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "mute-report BAD 10",
+        "mute-report I30 0",
+        "mute-report I30 inf",
+        "repeat-inject missing 0.1 10",
+        "repeat-inject bad_power 0 10",
+        "repeat-inject bad_power nan 10",
+        "repeat-inject bad_power 0.1 -1",
+    ],
+)
+async def test_invalid_fixture_parameters_are_rejected(rig: Rig, command: str) -> None:
+    try:
+        reply = await rig.ctl(command)
+    except ValueError:
+        pass  # The control server turns parser errors into an error reply.
+    else:
+        assert reply.startswith("error:")

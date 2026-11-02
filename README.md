@@ -136,6 +136,15 @@ that setting together with its message when calls overlap. Concurrent HDR and
 sharpness controls serialize their compound writes so changing one field does
 not reset another.
 
+## Hardware acceptance
+
+Use the [operator acceptance plan](hardware/TEST_PLAN.md) before on-screen UAT
+or a hardware-qualified release. It separates physical observations from
+synthetic failure coverage, supplies restoration/stop rules, and gates firmware
+work separately. The proxy supports timed report muting and repeated downstream
+noise; the exerciser excludes optimistic/ambiguous controls unless explicitly
+enabled with a manually verified baseline and operator confirmation.
+
 ## Status
 
 Alpha / prototype. Not yet in the Marketplace/HACS catalog — add it from the badge under [Installation](#installation).

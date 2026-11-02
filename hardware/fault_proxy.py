@@ -38,6 +38,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import random
 import re
 import shlex
@@ -50,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 import serialx
+from aiolumagen.protocol import MAX_RX_BUFFER
 
 _LOGGER = logging.getLogger("fault_proxy")
 
@@ -99,6 +101,7 @@ class Counters:
     bytes_up: int = 0
     bytes_down: int = 0
     lines_down: int = 0
+    reports_muted: int = 0
     writes_expected: int = 0
     writes_unsolicited: int = 0
     upstream_opens: int = 0
@@ -147,6 +150,8 @@ class FaultProxy:
         self._timed: dict[str, asyncio.TimerHandle] = {}
         self._chaos: asyncio.Task[None] | None = None
         self._tasks: set[asyncio.Task[None]] = set()
+        self._muted_reports: dict[str, asyncio.TimerHandle] = {}
+        self._repeat_task: asyncio.Task[None] | None = None
 
     # ---- upstream (the real device) ----
 
@@ -220,6 +225,10 @@ class FaultProxy:
         if complete:
             self.counters.lines_down += 1
         if f.drop_down or self._client is None:
+            return
+        report = re.match(rb"!([ISO]\d\d|S1[A-D])(?:,|[\r\n]|$)", line)
+        if report and report[1].decode() in self._muted_reports:
+            self.counters.reports_muted += 1
             return
         out = line
         if f.echo and self._echo_pending and out.lstrip().startswith(b"!"):
@@ -420,6 +429,12 @@ class FaultProxy:
         for handle in self._timed.values():
             handle.cancel()
         self._timed.clear()
+        for handle in self._muted_reports.values():
+            handle.cancel()
+        self._muted_reports.clear()
+        if self._repeat_task is not None:
+            self._repeat_task.cancel()
+            self._repeat_task = None
         self.faults = Faults()
         self._stall_released.set()
         self._refuse_until = 0.0
@@ -431,6 +446,8 @@ class FaultProxy:
             "client_connected": self._client is not None,
             "upstream_open": self._upstream_ready.is_set(),
             "faults": self.faults.active(),
+            "muted_reports": sorted(self._muted_reports),
+            "repeat_inject": self._repeat_task is not None and not self._repeat_task.done(),
             "refusing_for": max(0.0, round(self._refuse_until - time.monotonic(), 1)),
             "upstream_off_for": max(0.0, round(self._upstream_off_until - time.monotonic(), 1)),
             "chaos": self._chaos is not None and not self._chaos.done(),
@@ -469,8 +486,10 @@ class FaultProxy:
                 if make is not None:
                     self.set_fault(name, make(), hold)
                 elif name == "close":
+                    self.rec.write("fault", name="close")
                     await self._drop_client("chaos", rst=False)
                 elif name == "reset":
+                    self.rec.write("fault", name="reset")
                     await self._drop_client("chaos", rst=True)
                 elif name == "refuse":
                     self._refuse_until = time.monotonic() + hold
@@ -488,6 +507,20 @@ class FaultProxy:
     def inject(self, data: bytes) -> None:
         self.rec.write("fault", name="inject", data=data.decode("latin-1"))
         self._queue_down(data)
+
+    def _unmute_report(self, code: str) -> None:
+        self._muted_reports.pop(code, None)
+        self.rec.write("clear", name=f"mute_report:{code}")
+
+    async def _repeat_inject(self, name: str, interval: float, seconds: float) -> None:
+        self.rec.write("fault", name="repeat_inject", value=name, seconds=seconds)
+        end = time.monotonic() + seconds
+        try:
+            while time.monotonic() < end:
+                self.inject(MALFORMED_BY_NAME[name])
+                await asyncio.sleep(min(interval, max(0, end - time.monotonic())))
+        finally:
+            self.rec.write("clear", name="repeat_inject")
 
     async def command(self, line: str) -> str:
         args = shlex.split(line)
@@ -511,9 +544,11 @@ class FaultProxy:
             self._expect_label = " ".join(rest[1:])
             return "ok"
         if cmd == "close":
+            self.rec.write("fault", name="close")
             await self._drop_client("control", rst=False)
             return "ok"
         if cmd == "reset":
+            self.rec.write("fault", name="reset")
             await self._drop_client("control", rst=True)
             return "ok"
         if cmd == "refuse":
@@ -532,6 +567,29 @@ class FaultProxy:
                 self.inject(MALFORMED_BY_NAME[text])
             else:
                 self.inject(text.encode("latin-1").decode("unicode_escape").encode("latin-1"))
+            return "ok"
+        if cmd == "mute-report":
+            code, seconds = rest[0].upper(), _positive_seconds(rest[1])
+            if not re.fullmatch(r"[ISO]\d\d|S1[A-D]", code):
+                raise ValueError("report code must be I30, S01, S1A, etc.")
+            if (old := self._muted_reports.pop(code, None)) is not None:
+                old.cancel()
+            self._muted_reports[code] = asyncio.get_running_loop().call_later(
+                seconds, self._unmute_report, code
+            )
+            self.rec.write("fault", name=f"mute_report:{code}", seconds=seconds)
+            return "ok"
+        if cmd == "repeat-inject":
+            name, interval, seconds = (
+                rest[0],
+                _positive_seconds(rest[1]),
+                _positive_seconds(rest[2]),
+            )
+            if name not in MALFORMED_BY_NAME:
+                raise ValueError(f"unknown malformed preset {name!r}")
+            if self._repeat_task is not None and not self._repeat_task.done():
+                raise ValueError("an injection is already running; clear it first")
+            self._repeat_task = asyncio.create_task(self._repeat_inject(name, interval, seconds))
             return "ok"
         if cmd == "chaos":
             if self._chaos is not None:
@@ -586,6 +644,9 @@ MALFORMED_BY_NAME: dict[str, bytes] = {
     "no_bang": b"S01,RadiancePro,999999,0000,000000\r\n",
     "bad_power": b"!S02,7\r\n",
     "bad_firmware": b"!S01,RadiancePro,,,\r\n",
+    "bad_sharpness": b"!I30,Y9N\r\n",
+    "nonfinite_hdr": b"!I52,nan,inf,-inf,999999\r\n",
+    "overflow_suffix": b"x" * (MAX_RX_BUFFER + 1) + b"!S02,0\r\n",
 }
 MALFORMED = list(MALFORMED_BY_NAME.values())
 
@@ -607,11 +668,20 @@ Actions:
       """
     + " ".join(MALFORMED_BY_NAME)
     + """
+  mute-report CODE SECONDS                  suppress device reports, e.g. I30
+  repeat-inject NAME INTERVAL SECONDS        repeat a malformed preset downstream
   chaos SECONDS [SEED]                       random time-boxed faults, then clear
 Bookkeeping:
   expect-write SECONDS [LABEL]               state-changing commands are expected
   mark TEXT | status | clear | help"""
 )
+
+
+def _positive_seconds(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("seconds must be finite and greater than zero")
+    return value
 
 
 def _host_port(value: str) -> tuple[str, int]:

@@ -8,12 +8,14 @@ the logic that decides gets tested like product code.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import importlib.util
 import json
 import math
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -66,6 +68,32 @@ def test_proxy_windows(tmp_path: Path) -> None:
         ],
     )
     assert [(w.start - T0, w.end - T0) for w in probe.proxy_windows(log, T0)] == [(1, 5)]
+
+
+def test_timed_faults_end_at_clear_or_off_not_the_original_deadline(tmp_path: Path) -> None:
+    log = _write_log(
+        tmp_path / "proxy.jsonl",
+        [
+            (T0 + 10, {"kind": "fault", "name": "drop_down", "value": True, "seconds": 120}),
+            (T0 + 20, {"kind": "clear", "name": "all"}),
+            (T0 + 30, {"kind": "fault", "name": "drop_up", "value": True, "seconds": 60}),
+            (T0 + 35, {"kind": "fault", "name": "drop_up", "value": False}),
+            (T0 + 40, {"kind": "fault", "name": "mute_report:I30", "seconds": 30}),
+            (T0 + 45, {"kind": "clear", "name": "mute_report:I30"}),
+            (
+                T0 + 50,
+                {"kind": "fault", "name": "repeat_inject", "value": "bad_power", "seconds": 60},
+            ),
+            (T0 + 55, {"kind": "clear", "name": "repeat_inject"}),
+            (T0 + 100, {"kind": "clear", "name": "all"}),
+        ],
+    )
+    assert [(w.start - T0, w.end - T0) for w in probe.proxy_windows(log, T0)] == [
+        (10, 20),
+        (30, 35),
+        (40, 45),
+        (50, 55),
+    ]
 
 
 def _classify(outages, windows, now=T0 + 10_000):
@@ -284,3 +312,181 @@ async def test_a_log_entry_keeps_its_key_when_a_new_message_joins_it() -> None:
     after = await ha.lumagen_logs()
     deltas = [item["count"] - before.get(key, 0) for key, item in after.items()]
     assert deltas == [1]
+
+
+def test_unverified_controls_require_explicit_exerciser_opt_in() -> None:
+    safe = {step.name for step in probe.steps()}
+    all_steps = {step.name for step in probe.steps(allow_unverified=True)}
+    assert all_steps - safe == {
+        "HDR gamma mode keeps max nits",
+        "HDR max nits keeps gamma mode",
+        "minimum fan speed",
+        "subtitle shift",
+        "aspect",
+    }
+
+
+async def test_exerciser_restores_after_confirmation_failure() -> None:
+    states = {"number.level": "4", "select.sensitivity": "normal"}
+    original = states.copy()
+    ex = MagicMock()
+    ex.state.side_effect = states.get
+
+    async def set_value(key: str, value: str | float) -> float:
+        states[key] = str(value).removesuffix(".0")
+        if key == "number.level" and value == 5:
+            raise AssertionError("reply lost after write")
+        return 0
+
+    ex.set = AsyncMock(side_effect=set_value)
+    with pytest.raises(AssertionError, match="reply lost"):
+        await probe._change_and_restore(ex, "number.level", lambda _v: 5, ["select.sensitivity"])
+    assert states == original
+
+
+async def test_exerciser_restores_fields_changed_by_a_compound_write_bug() -> None:
+    states = {"number.level": "4", "select.sensitivity": "normal"}
+    original = states.copy()
+    ex = MagicMock()
+    ex.state.side_effect = states.get
+
+    async def set_value(key: str, value: str | float) -> float:
+        states[key] = str(value).removesuffix(".0")
+        if key == "number.level" and value == 5:
+            states["select.sensitivity"] = "high"
+        return 0
+
+    ex.set = AsyncMock(side_effect=set_value)
+    with pytest.raises(AssertionError, match="also changed"):
+        await probe._change_and_restore(ex, "number.level", lambda _v: 5, ["select.sensitivity"])
+    assert states == original
+
+
+async def test_exerciser_surfaces_failed_restoration_as_an_abort() -> None:
+    ex = MagicMock()
+    ex.state.return_value = "4"
+    ex.set = AsyncMock(side_effect=[0, probe.HAError("link down during restore")])
+    with pytest.raises(probe.RestoreError, match="link down during restore"):
+        await probe._change_and_restore(ex, "number.level", lambda _v: 5, [])
+
+
+async def test_power_cycle_attempts_to_restore_on_after_standby_confirmation_fails() -> None:
+    ex = MagicMock()
+    ex.state.return_value = "on"
+    ex.press = AsyncMock(return_value=0)
+    ex.wait_for = AsyncMock(side_effect=[TimeoutError(), 0])
+    with pytest.raises(TimeoutError):
+        await probe._power_cycle(ex)
+    assert [call.args[0] for call in ex.press.await_args_list] == [
+        "button.standby",
+        "button.power_on",
+    ]
+
+
+async def test_unmatched_scenarios_fail_before_connecting() -> None:
+    args = argparse.Namespace(long=False, only=["not-a-scenario"])
+    with pytest.raises(SystemExit, match="No scenarios"):
+        await probe.scenarios(args)
+
+
+async def test_cancelled_scenario_campaign_is_not_a_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    ha = MagicMock()
+    ha.connect = AsyncMock()
+    ha.close = AsyncMock()
+    ha.entry = AsyncMock(return_value={"entry_id": "test"})
+    ha.entities = AsyncMock(return_value={})
+    health = MagicMock()
+    health.attach = AsyncMock()
+    monkeypatch.setattr(probe, "HA", MagicMock(return_value=ha))
+    monkeypatch.setattr(probe, "Health", MagicMock(return_value=health))
+    monkeypatch.setattr(probe, "load_token", lambda _path: "synthetic")
+    monkeypatch.setattr(probe, "run_scenario", AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr(probe, "proxy_ctl", AsyncMock(return_value="ok"))
+    args = argparse.Namespace(
+        long=False,
+        only=["malformed"],
+        out=None,
+        url="unused",
+        token_file=None,
+        entry="test",
+        proxy_control="unused",
+    )
+    assert await probe.scenarios(args) == 1
+    ha.close.assert_awaited_once()
+
+
+async def test_exerciser_aborts_campaign_when_baseline_restore_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ha = MagicMock()
+    for name in ("connect", "close", "subscribe"):
+        setattr(ha, name, AsyncMock())
+    ha.entry = AsyncMock(return_value={"entry_id": "test"})
+    ha.entities = AsyncMock(return_value={})
+    ha.states = AsyncMock(return_value={})
+    failed = AsyncMock(side_effect=probe.RestoreError("restore failed"))
+    must_not_run = AsyncMock()
+    monkeypatch.setattr(probe, "HA", MagicMock(return_value=ha))
+    monkeypatch.setattr(probe, "load_token", lambda _path: "synthetic")
+    monkeypatch.setattr(
+        probe,
+        "steps",
+        lambda **_kwargs: [
+            probe.Step("failure", "none", failed),
+            probe.Step("not safe to continue", "none", must_not_run),
+        ],
+    )
+    args = argparse.Namespace(
+        out=None,
+        url="unused",
+        token_file=None,
+        entry="test",
+        allow=[],
+        allow_unverified=False,
+        rounds=1,
+        seed=0,
+        operator=False,
+        verbose=False,
+        proxy_control=None,
+        pause=0,
+        interval=0,
+    )
+    assert await probe.exercise(args) == 1
+    must_not_run.assert_not_awaited()
+    ha.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("forced_reload", [False, True])
+async def test_detection_deadline_is_not_extended_or_hidden_by_reload(
+    monkeypatch: pytest.MonkeyPatch, forced_reload: bool
+) -> None:
+    ha = MagicMock()
+    ha.lumagen_logs = AsyncMock(return_value={})
+    ha.service = AsyncMock()
+    health = MagicMock()
+    health.up = True
+    health.identity_values.return_value = {}
+    health.wait = AsyncMock(side_effect=[0, None, 0])
+    counters = {"writes_unsolicited": 0, "concurrent_refused": 0}
+    monkeypatch.setattr(
+        probe, "proxy_ctl", AsyncMock(return_value=json.dumps({"counters": counters}))
+    )
+
+    async def reload(*_args: object) -> None:
+        health.up = False
+
+    monkeypatch.setattr(probe, "_ha_action", AsyncMock(side_effect=reload))
+    args = argparse.Namespace(
+        proxy_control="unused", recovery_deadline=1, detect_deadline=0.2, max_warnings=6
+    )
+    result = await probe.run_scenario(
+        probe.Scenario("deadline", [], 0.1, "down", ha_action="reload" if forced_reload else None),
+        ha,
+        health,
+        "test",
+        {"button.query_status": "button.test"},
+        args,
+        probe.Journal(None),
+    )
+    assert not result["ok"]
+    assert health.wait.await_args_list[1].args[1] <= args.detect_deadline
