@@ -251,3 +251,36 @@ def test_scenario_identity_check_sees_values_a_later_query_repaired() -> None:
     state("sensor.firmware", "030225")
     assert health.identity_seen == {"sensor.firmware": {"", "030225"}}
     assert health.identity_values() == {"sensor.model": None, "sensor.firmware": "030225"}
+
+
+async def test_a_log_entry_keeps_its_key_when_a_new_message_joins_it() -> None:
+    """Regression: a scenario that logged one warning was charged with seven.
+
+    Home Assistant appends each new distinct message to the same system log
+    entry. Keyed by text, the entry looked brand new when that happened, so
+    its whole lifetime count was taken as this scenario's.
+    """
+    entry = {
+        "name": "aiolumagen.client",
+        "level": "WARNING",
+        "source": ["runner.py", 280],
+        "first_occurred": T0,
+        "count": 6,
+        "message": ["Lumagen is now unavailable (no response in 45s), reconnecting"],
+    }
+    ha = probe.HA("http://127.0.0.1:8123", "token")
+    replies = [[dict(entry)]]
+    entry.update(
+        count=7,
+        message=[*entry["message"], "Lumagen is now unavailable (transport disconnected)"],
+    )
+    replies.append([entry])
+
+    async def call(_type: str, **_payload: object) -> object:
+        return replies.pop(0)
+
+    ha.call = call  # type: ignore[method-assign]
+    before = {k: v["count"] for k, v in (await ha.lumagen_logs()).items()}
+    after = await ha.lumagen_logs()
+    deltas = [item["count"] - before.get(key, 0) for key, item in after.items()]
+    assert deltas == [1]

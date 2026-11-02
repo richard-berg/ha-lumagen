@@ -206,14 +206,32 @@ class HA:
         }
 
     async def lumagen_logs(self) -> dict[tuple[Any, ...], dict[str, Any]]:
-        """System log entries from Lumagen code, keyed so counts can be diffed."""
+        """System log entries from Lumagen code, keyed so counts can be diffed.
+
+        Keyed by what identifies an entry, never by its text. Home Assistant
+        groups records by logger and source line, counting every repeat and
+        appending each new distinct message (up to five) to the same entry. A
+        text key changed whenever a new message joined, and the entry's whole
+        lifetime count was then taken as new: 7 warnings for a scenario that
+        logged one. ``first_occurred`` tells an entry from one recreated after
+        it was evicted.
+        """
         out = {}
         for item in await self.call("system_log/list"):
-            text = " ".join(item.get("message") or [])
-            if item.get("name", "").startswith(LOGGERS) or DOMAIN in text.lower():
-                key = (item.get("name"), item.get("level"), tuple(item.get("source") or ()), text)
+            if item.get("name", "").startswith(LOGGERS) or DOMAIN in log_text(item).lower():
+                key = (
+                    item.get("name"),
+                    item.get("level"),
+                    tuple(item.get("source") or ()),
+                    item.get("first_occurred"),
+                )
                 out[key] = item
         return out
+
+
+def log_text(item: dict[str, Any]) -> str:
+    """The messages of a system log entry, as one line."""
+    return " ".join(item.get("message") or [])
 
 
 def load_token(path: Path) -> str:
@@ -514,9 +532,10 @@ class Monitor:
                 delta = count - self.log_counts.get(key, 0)
                 if delta > 0:
                     level = item.get("level")
-                    self.new_logs[f"{level} {key[0]}: {key[3][:160]}"] += delta
+                    text = log_text(item)
+                    self.new_logs[f"{level} {key[0]}: {text[:160]}"] += delta
                     self.journal.write(
-                        "log", level=level, logger=key[0], count=delta, message=key[3][:300]
+                        "log", level=level, logger=key[0], count=delta, message=text[:300]
                     )
                 self.log_counts[key] = count
         pid = pid if pid and Path(f"/proc/{pid}").exists() else find_hass_pid()
@@ -1197,7 +1216,7 @@ async def run_scenario(
         if (delta := item.get("count", 1) - logs_before.get(key, 0)) > 0:
             levels[item.get("level")] += delta
             if item.get("level") in {"ERROR", "CRITICAL"}:
-                problems.append(f"logged {item.get('level')}: {key[3][:200]}")
+                problems.append(f"logged {item.get('level')}: {log_text(item)[:200]}")
     if levels["WARNING"] > args.max_warnings * sc.repeat:
         problems.append(f"{levels['WARNING']} warnings")
     if sc.identity_unchanged:
